@@ -28,28 +28,26 @@ var staticFS embed.FS
 
 // Server hosts the local web UI, REST API, and WebSocket streaming bridge.
 type Server struct {
-	State         bmc.SessionState
-	StateMu       sync.RWMutex
-	Console       bmc.Console // set once before Start; nil until the BMC is connected
-	WSConns       map[*WSConn]bool
-	WSMu          sync.Mutex
-	Port          int
-	HTTPServer    *http.Server
-	MountedISO    string
-	ISOReader     io.ReadSeekCloser
-	FrameChannel  chan []byte
-	LastFrame     []byte
-	LastFullFrame []byte
-	LastFrameMu   sync.RWMutex
+	State       bmc.SessionState
+	StateMu     sync.RWMutex
+	Console     bmc.Console // set once before Start; nil until the BMC is connected
+	clients     map[*wsClient]struct{}
+	clientsMu   sync.Mutex // guards clients and lastResync
+	lastResync  time.Time
+	Port        int
+	HTTPServer  *http.Server
+	MountedISO  string
+	ISOReader   io.ReadSeekCloser
+	LastFrame   []byte // latest raw RGBA frame, replayed to new browsers
+	LastFrameMu sync.RWMutex
 }
 
 // NewServer initializes a new Web UI server.
 func NewServer(port int, state bmc.SessionState) *Server {
 	return &Server{
-		State:        state,
-		Port:         port,
-		WSConns:      make(map[*WSConn]bool),
-		FrameChannel: make(chan []byte, 60),
+		State:   state,
+		Port:    port,
+		clients: make(map[*wsClient]struct{}),
 	}
 }
 
@@ -104,9 +102,6 @@ func (s *Server) Run(ctx context.Context, openBrowser bool) error {
 			s.launchBrowser(url)
 		}()
 	}
-
-	// Start background frame distributor
-	go s.frameBroadcaster()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- s.HTTPServer.Serve(listener) }()

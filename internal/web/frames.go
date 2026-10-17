@@ -2,36 +2,6 @@ package web
 
 import "encoding/binary"
 
-// BroadcastFrame distributes a video frame to all connected browsers.
-func (s *Server) BroadcastFrame(frame []byte) {
-	select {
-	case s.FrameChannel <- frame:
-	default:
-		// Drop frame if channel is full to preserve real-time low latency
-	}
-}
-
-// frameBroadcaster pushes frames to active WebSockets without holding WSMu during network writes.
-func (s *Server) frameBroadcaster() {
-	for frame := range s.FrameChannel {
-		s.WSMu.Lock()
-		clients := make([]*WSConn, 0, len(s.WSConns))
-		for ws := range s.WSConns {
-			clients = append(clients, ws)
-		}
-		s.WSMu.Unlock()
-
-		for _, ws := range clients {
-			if err := ws.WriteMessage(OpBinary, frame); err != nil {
-				s.WSMu.Lock()
-				delete(s.WSConns, ws)
-				s.WSMu.Unlock()
-				_ = ws.Close()
-			}
-		}
-	}
-}
-
 // SendRawRGBA encodes width, height, and raw RGBA pixels and broadcasts to browsers.
 func (s *Server) SendRawRGBA(width, height int, rgba []byte) {
 	buf := make([]byte, 5+len(rgba))
@@ -41,10 +11,10 @@ func (s *Server) SendRawRGBA(width, height int, rgba []byte) {
 	copy(buf[5:], rgba)
 
 	s.LastFrameMu.Lock()
-	s.LastFrame = append(s.LastFrame[:0], buf...)
+	s.LastFrame = buf
 	s.LastFrameMu.Unlock()
 
-	s.BroadcastFrame(buf)
+	s.broadcast(buf)
 }
 
 // SendAspeedFrame packages an Aspeed video bitstream chunk and broadcasts to browsers.
@@ -59,14 +29,8 @@ func (s *Server) SendAspeedFrame(mode420, lumaSelector, chromaSelector byte, w, 
 	binary.BigEndian.PutUint16(buf[10:12], h)
 	copy(buf[12:], bitstream)
 
-	s.LastFrameMu.Lock()
-	s.LastFrame = append(s.LastFrame[:0], buf...)
-	if len(bitstream) > 1000 {
-		s.LastFullFrame = append(s.LastFullFrame[:0], buf...)
-	}
-	s.LastFrameMu.Unlock()
-
-	s.BroadcastFrame(buf)
+	// ASPEED frames are deltas, so none is cached for new browsers: they request a refresh.
+	s.broadcast(buf)
 }
 
 // SetScreenSize records the host's current video mode so /api/status and newly connected

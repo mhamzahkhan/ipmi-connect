@@ -1,76 +1,66 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+
+	"github.com/coder/websocket"
 )
 
-// handleWS manages the live WebSocket connection with the browser.
+// maxClientMessage bounds browser-to-server messages; input events are tiny JSON objects.
+const maxClientMessage = 4096
+
+// handleWS streams video to one browser and forwards its input to the console. Accept rejects
+// cross-origin connections: only pages served by this server can open the socket.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
-	ws, err := Upgrade(w, r)
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
-		log.Printf("[WS] Upgrade error: %v", err)
+		log.Printf("[WS] Rejected connection: %v", err)
 		return
 	}
-	defer ws.Close()
+	defer func() { _ = conn.CloseNow() }()
+	conn.SetReadLimit(maxClientMessage)
 
-	s.WSMu.Lock()
-	s.WSConns[ws] = true
-	s.WSMu.Unlock()
+	// Not r.Context(): the request is hijacked, so its context does not track the socket.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	defer func() {
-		s.WSMu.Lock()
-		delete(s.WSConns, ws)
-		s.WSMu.Unlock()
-	}()
+	client := newWSClient()
+	go client.writeLoop(ctx, cancel, conn)
 
 	s.StateMu.RLock()
-	wDim, hDim := s.State.ScreenWidth, s.State.ScreenHeight
+	width, height := s.State.ScreenWidth, s.State.ScreenHeight
 	s.StateMu.RUnlock()
+	resize, _ := json.Marshal(map[string]any{"type": "resize", "width": width, "height": height})
+	client.out <- outMessage{typ: websocket.MessageText, data: resize}
 
-	if wDim == 0 || hDim == 0 {
-		wDim, hDim = 1024, 768
-	}
-
-	initMsg, _ := json.Marshal(map[string]interface{}{
-		"type":   "resize",
-		"width":  wDim,
-		"height": hDim,
-	})
-	_ = ws.WriteMessage(OpText, initMsg)
-
-	// Send cached last full frame to newly connected client
 	s.LastFrameMu.RLock()
-	if len(s.LastFullFrame) > 0 {
-		_ = ws.WriteMessage(OpBinary, s.LastFullFrame)
-	} else if len(s.LastFrame) > 0 {
-		_ = ws.WriteMessage(OpBinary, s.LastFrame)
+	if len(s.LastFrame) > 0 {
+		client.out <- outMessage{typ: websocket.MessageBinary, data: s.LastFrame}
 	}
 	s.LastFrameMu.RUnlock()
 
-	if s.Console == nil {
-		// Drain until the browser goes away; input has nowhere to go yet.
-		for {
-			if _, _, err := ws.ReadMessage(); err != nil {
-				return
-			}
+	s.addClient(client)
+	defer s.removeClient(client)
+
+	var input *inputState
+	if s.Console != nil {
+		input = newInputState(s.Console)
+		defer input.releaseAll() // a closed tab must not leave keys or buttons held on the host
+		// Ask for a complete frame so this browser can render without waiting for changes.
+		if err := s.Console.RequestFrameRefresh(); err != nil {
+			log.Printf("[WS] Refresh for new client: %v", err)
 		}
 	}
 
-	// Ask for a complete frame so this browser can render without waiting for screen changes.
-	if err := s.Console.RequestFrameRefresh(); err != nil {
-		log.Printf("[WS] Refresh for new client: %v", err)
-	}
-
-	input := newInputState(s.Console)
-	defer input.releaseAll() // a closed tab must not leave keys or buttons held on the host
 	for {
-		op, data, err := ws.ReadMessage()
+		typ, data, err := conn.Read(ctx)
 		if err != nil {
 			return
 		}
-		if op == OpText {
+		if typ == websocket.MessageText && input != nil {
 			input.handle(data)
 		}
 	}

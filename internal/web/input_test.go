@@ -2,6 +2,7 @@ package web
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 
 	"ipmi-connect/internal/bmc"
@@ -14,6 +15,7 @@ type pointerCall struct {
 
 // fakeConsole records what the web layer sends to the BMC.
 type fakeConsole struct {
+	mu        sync.Mutex
 	keys      []keyEvent
 	pointers  []pointerCall
 	refreshes int
@@ -21,16 +23,31 @@ type fakeConsole struct {
 }
 
 func (f *fakeConsole) SendPointerEvent(buttons byte, x, y uint16) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.pointers = append(f.pointers, pointerCall{buttons, x, y})
 	return nil
 }
 
 func (f *fakeConsole) SendKeyEvent(down bool, usage uint16) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.keys = append(f.keys, keyEvent{down: down, key: uint32(usage)})
 	return nil
 }
 
-func (f *fakeConsole) RequestFrameRefresh() error { f.refreshes++; return nil }
+func (f *fakeConsole) RequestFrameRefresh() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refreshes++
+	return nil
+}
+
+func (f *fakeConsole) snapshot() (keys []keyEvent, refreshes int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]keyEvent(nil), f.keys...), f.refreshes
+}
 
 func (f *fakeConsole) PowerControl(a bmc.PowerAction) error {
 	f.power = append(f.power, a)
