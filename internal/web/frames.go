@@ -16,3 +16,11 @@ func (s *Server) SetFPS(fps int) {
 	defer s.StateMu.Unlock()
 	s.State.FPS = fps
 }
+
+// SetStatus records a console status message ("No video signal", "View only", ...) for
+// /api/status; an empty text clears it.
+func (s *Server) SetStatus(text string) {
+	s.StateMu.Lock()
+	defer s.StateMu.Unlock()
+	s.State.StatusText = text
+}

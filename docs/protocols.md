@@ -145,39 +145,76 @@ When framing packets over TCP/TLS (`BEEF` / `0xDEADBEEF` headers):
 
 ---
 
-## 2. Supermicro ATEN Extended RFB Protocol (Port 5900)
+## 2. Supermicro ATEN iKVM (modified RFB, port 5900)
 
-Supermicro's ATEN iKVM uses an extended version of RFB 3.8. The sequence below is what `ipmi-connect` implements; framebuffer decoding is not implemented yet.
+Sources: the X7SB3's own client library (`iKVM__V1.69.21`, decompiled), cross-checked with smkvm,
+noVNC's ATEN fork and chicken-aten. Where they disagree, the vendor library for this firmware wins.
 
-### 2.1 Connection Sequence
+### 2.1 Getting a session
+
+1. `POST /cgi/login.cgi` with `name=<user>&pwd=<password>` → `SID` cookie. A body containing
+   `login_alert` means the login failed.
+2. `GET /cgi/url_redirect.cgi?url_name=ikvm&url_type=jwsk` (fallback `url_name=man_ikvm`) with
+   `Cookie: SID=…` → a JNLP. Its arguments are anchored on the host argument: host, **one-time
+   token**, the same token, unused, KVM port. Firmware with "KVM SSL" adds `1` and a TLS port.
+   Tokens are single use: fetch a new JNLP for every connection.
+3. `GET /cgi/logout.cgi` ends the web session **and kicks the KVM session**, so log out last.
+
+### 2.2 Handshake
 
 ```mermaid
 sequenceDiagram
-    participant Client
-    participant BMC as Supermicro BMC (WPCM450:5900)
-
-    Client->>BMC: TCP Connect
-    BMC-->>Client: "RFB 003.008\n" (12 bytes)
-    Client->>BMC: "RFB 003.008\n" (12 bytes)
-
-    BMC-->>Client: Security type count + list (must include 16 = ATEN)
-    Client->>BMC: Security Type 16 (ATEN)
-    BMC-->>Client: 24-byte challenge
-    Client->>BMC: Username (24B, zero-padded) + password (24B, zero-padded)
-    BMC-->>Client: Auth result uint32 (0 = OK, else length-prefixed error string)
-
-    Client->>BMC: ClientInit (shared-flag = 0, exclusive)
-    BMC-->>Client: ServerInit: Width, Height, PixelFormat, DesktopName
-
-    loop Every 100 ms
-        Client->>BMC: FramebufferUpdateRequest (incremental=1)
-        BMC-->>Client: FramebufferUpdate (ATEN tile encoding, not yet decoded)
-    end
+    participant C as Client
+    participant B as BMC :5900
+    B-->>C: "RFB 003.008\n"
+    C->>B: same 12 bytes
+    B-->>C: u8 n, n security types (0x10 = ATEN)
+    C->>B: 0x10 (else the last type offered)
+    B-->>C: 24-byte challenge (ignored)
+    C->>B: token[24] ‖ token[24], NUL-padded, max 23 chars each
+    B-->>C: u32 result (0 = OK; else u32 len + reason)
+    C->>B: ClientInit 0x00
+    B-->>C: ServerInit + 12-byte ATEN trailer
+    C->>B: 0x37 (mouse info), full FramebufferUpdateRequest
 ```
 
-### 2.2 Input Injection (RFB)
-- **PointerEvent (Message Type 5)**:
-  `[0x05, buttonMask, X_hi, X_lo, Y_hi, Y_lo]`
-- **KeyEvent (Message Type 4)**:
-  `[0x04, downFlag, 0x00, 0x00, KeySym_b3, KeySym_b2, KeySym_b1, KeySym_b0]` (X11 KeySyms)
-  Note: the browser currently sends DOM `keyCode` values here, which only coincide with keysyms for some keys.
+The ServerInit width, height and pixel format are placeholders. The trailer is 4 unused bytes, a
+u32 session id, and four flags: video allowed, keyboard/mouse allowed, kick allowed, virtual
+media allowed. The client never sends SetPixelFormat or SetEncodings.
+
+### 2.3 Server messages
+
+| Type | Body |
+| :--- | :--- |
+| `0x00` | FramebufferUpdate: pad, u16 count, then per rect u16 x, y, w, h, s32 encoding, u32 frame mode, u32 length, data |
+| `0x04` | Cursor: five u32 (x, y, w, h, type); type 1 adds a u32 and a w×h×2 bitmap |
+| `0x16` | Keep-alive, 1 byte |
+| `0x33` | 4 bytes |
+| `0x35` | Keyboard info (2) + mouse info (3) |
+| `0x37` | Mouse info: encryption flag, mouse mode, power status (3 bytes on this firmware, 2 on later X9) |
+| `0x39` | Privilege notice: u32 a, u32 b, 256-byte text; a=1, b=4 means another user has control |
+| `0x3c` | Two u32 |
+
+The rect width and height are the live resolution. `0xFD80×0xFE20` means the host has no video
+signal; the BMC answers every update request instantly in that state, so do not reply, poll at
+1 Hz instead. A 1×1 rect means another session holds the video.
+
+### 2.4 Hermon video (encoding 0x59, or 0x00 on older firmware)
+
+10-byte header: type (1 = raw full frame, else tiles), depth (0 = RGB555 little-endian, 2 bytes per
+pixel; non-zero = RGB222, 1 byte per pixel), u32 BE tile count, u32 BE total length. Each tile is
+4 unused bytes, row, column, then 16×16 pixels, placed at (col×16, row×16) and clipped at the
+edges. Request the next update (`03 01 0000 0000 w h`) after each one received.
+
+### 2.5 Client messages
+
+All input messages are 18 bytes:
+
+- **Key:** `04 00 down 00 00 <u32 BE USB HID usage> 00×9`.
+- **Pointer:** `05 00 buttons <u16 x> <u16 y> 00×11` (left 1, middle 2, right 4, wheel 8/16).
+  When the 0x37 reply sets the encryption flag, send `05 01` plus one AES-128-CBC block of
+  `[buttons, x, y, 11 random bytes]`, key `2b7e151628aed2a6abf7158809cf4f3c`, IV `00…0f`.
+- **Keep-alive:** `16 01` every 3 s.
+- **Power:** `1a n` (0 off, 1 on, 2 reset, 3 soft off). Without a KVM session, use
+  `POST /cgi/ipmi.cgi` with `POWER_INFO.XML=(1,N)` (IPMI chassis codes: 0 off, 1 on, 2 cycle,
+  3 reset, 5 soft). `POWER_INFO.XML=(0,0)` returns `<POWER STATUS="ON"/>`.

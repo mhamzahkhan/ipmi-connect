@@ -106,6 +106,10 @@ import { KEY_TO_HID } from '/keymap.js';
       // The server decodes the stream, so it reports the BMC's frame rate; the browser only sees
       // changes.
       statFPS.textContent = `FPS: ${data.fps || 0}`;
+      // Console notices such as "No video signal" or "View only"; empty when all is well.
+      const notice = document.getElementById('statNotice');
+      notice.textContent = data.status_text || '';
+      notice.hidden = !data.status_text;
 
       // Canvas size is owned by the video stream: resizing a canvas clears it, so status polls
       // must never touch it.

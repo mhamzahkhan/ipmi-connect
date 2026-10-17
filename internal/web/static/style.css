@@ -270,6 +270,11 @@ body {
   background-color: var(--border-color);
 }
 
+.stat-notice {
+  color: var(--warning);
+  font-weight: 600;
+}
+
 .macro-stats {
   margin-left: auto;
   font-family: var(--font-mono);

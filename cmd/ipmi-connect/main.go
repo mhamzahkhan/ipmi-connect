@@ -42,7 +42,6 @@ func main() {
 		PowerState:   "ONLINE",
 		ScreenWidth:  1024,
 		ScreenHeight: 768,
-		StatusText:   "Connecting...",
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

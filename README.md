@@ -16,11 +16,11 @@ The protocols were reverse-engineered from the vendors' JARs. Nothing from those
 | Feature | Dell | Supermicro |
 | :--- | :--- | :--- |
 | Login / clean logout | Works | Works |
-| Live video | Works (Go ASPEED decoder, verified frame-for-frame against Aspeed's reference) | **Not implemented**: shows a blank placeholder |
-| Keyboard | Works (USB HID) | **Broken**: sends DOM `keyCode` as X11 keysym |
-| Mouse | Works | Works (RFB PointerEvent) |
-| Macros (Ctrl+Alt+Del, F-keys…) | Works | Works |
-| Power control | Works | Implemented, untested |
+| Live video | Works (Go ASPEED decoder, verified frame-for-frame against Aspeed's reference) | Implemented (Hermon), not yet seen on hardware |
+| Keyboard | Works (USB HID) | Implemented (18-byte HID events), not yet seen on hardware |
+| Mouse | Works | Implemented (incl. AES variant), not yet seen on hardware |
+| Macros (Ctrl+Alt+Del, F-keys…) | Works | Implemented |
+| Power control | Works | Status verified; commands over the KVM socket or `ipmi.cgi` |
 | Virtual media | **Stub**: upload is saved locally, nothing reaches the BMC | **Stub** |
 
 ## Quick start
