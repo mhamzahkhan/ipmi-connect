@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"ipmi-connect/internal/bmc"
@@ -61,6 +62,7 @@ type Client struct {
 	ConnMu                sync.Mutex // guards CtrlConn, VideoConn and heartbeatStop
 	ctrlWriteMu           sync.Mutex // serialises writes on CtrlConn
 	videoWriteMu          sync.Mutex // serialises writes on VideoConn
+	loggingOut            atomic.Bool
 }
 
 // NewClient creates a new Dell BMC client.

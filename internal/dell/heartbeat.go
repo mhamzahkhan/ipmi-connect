@@ -70,6 +70,9 @@ func (c *Client) drainControl(stopCh <-chan struct{}) {
 			if isTimeout(err) {
 				continue
 			}
+			if c.loggingOut.Load() {
+				return // Logout closed the channel deliberately
+			}
 			// Unread notifications would back up on the BMC. Close both channels so the video
 			// loop's read fails and the reconnect path takes over.
 			log.Printf("[Dell] Control channel failed (%v); closing session for reconnect", err)

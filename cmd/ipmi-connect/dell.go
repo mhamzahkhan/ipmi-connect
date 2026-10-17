@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"os"
 	"time"
 
 	"ipmi-connect/internal/dell"
@@ -43,17 +44,17 @@ func runDell(ctx context.Context, server *web.Server, host, user, password strin
 	}
 
 	if err := client.RefreshKVMTokens(); err != nil {
-		log.Fatalf("[Dell] Could not get KVM session tokens: %v", err)
+		fatalAfterLogin(client, "[Dell] Could not get KVM session tokens: %v", err)
 	}
 
 	log.Printf("[Dell] Connecting Control Channel on %s:%d...", host, client.VPort)
 	if err := client.ConnectControl(); err != nil {
-		log.Fatalf("[Dell] Control channel connection failed: %v", err)
+		fatalAfterLogin(client, "[Dell] Control channel connection failed: %v", err)
 	}
 
 	log.Printf("[Dell] Connecting Video Channel on %s:%d...", host, client.VPort)
 	if err := client.ConnectVideo(); err != nil {
-		log.Fatalf("[Dell] Video channel connection failed: %v", err)
+		fatalAfterLogin(client, "[Dell] Video channel connection failed: %v", err)
 	}
 
 	if err := client.EnableVideo(); err != nil {
@@ -62,6 +63,14 @@ func runDell(ctx context.Context, server *web.Server, host, user, password strin
 
 	go pollDellSession(ctx, server, client)
 	go streamDellVideo(ctx, server, client)
+}
+
+// fatalAfterLogin logs out before exiting: the BMC allows a single GUI session, and leaving it
+// open locks out the next login until the BMC times it out.
+func fatalAfterLogin(client *dell.Client, format string, args ...any) {
+	log.Printf(format, args...)
+	client.Logout()
+	os.Exit(1)
 }
 
 // pollDellSession keeps the WebGUI session alive and refreshes the reported power state.
@@ -125,6 +134,9 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 					lastPktTime = time.Now()
 				}
 				continue
+			}
+			if ctx.Err() != nil {
+				return // shutting down: the read failed because Logout closed the channels
 			}
 			log.Printf("[Dell] Video stream interrupted (%v). Attempting automatic reconnection...", err)
 			frames.take() // a partial frame would decode as garbage

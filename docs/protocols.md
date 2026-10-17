@@ -136,7 +136,7 @@ When framing packets over TCP/TLS (`BEEF` / `0xDEADBEEF` headers):
   - Header: `Content-Type: application/x-www-form-urlencoded`
   - Header: `ST2: <token>`
   - Body: empty string (`""`)
-  - Codes: `0` = Off, `1` = On, `2` = Power Cycle, `3` = Hard Reset, `4` = ACPI Shutdown
+  - Codes (IPMI Chassis Control): `0` = Off, `1` = On, `2` = Power Cycle, `3` = Hard Reset, `4` = NMI, `5` = ACPI Shutdown
 - **Session Keepalive (`POST /data/keepGUISessionAlive?ST1=<token>`)**:
   - Prevents the AppWeb WebGUI session from timing out.
   - Header: `Content-Type: application/x-www-form-urlencoded`, Header: `ST2: <token>`.

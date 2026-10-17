@@ -127,6 +127,7 @@ func (c *Client) Login() error {
 
 // Logout releases the GUI session on the BMC.
 func (c *Client) Logout() {
+	c.loggingOut.Store(true)
 	c.SessionMu.Lock()
 	defer c.SessionMu.Unlock()
 

@@ -85,13 +85,15 @@ func (c *Client) PowerControl(action bmc.PowerAction) error {
 	return nil
 }
 
-// pwStateCodes maps power actions to AppWeb's set=pwState:<code> values.
+// pwStateCodes maps power actions to AppWeb's set=pwState:<code> values, which follow the IPMI
+// Chassis Control command: 0 down, 1 up, 2 cycle, 3 hard reset, 4 diagnostic interrupt (NMI),
+// 5 soft (ACPI) shutdown. NMI is deliberately not exposed.
 var pwStateCodes = map[bmc.PowerAction]string{
 	bmc.PowerOff:     "0",
 	bmc.PowerOn:      "1",
 	bmc.PowerCycle:   "2",
 	bmc.PowerReset:   "3",
-	bmc.PowerSoftOff: "4",
+	bmc.PowerSoftOff: "5",
 }
 
 func pwStateCode(action bmc.PowerAction) (string, error) {

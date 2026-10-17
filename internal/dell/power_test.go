@@ -16,7 +16,7 @@ func TestPwStateCode(t *testing.T) {
 		{action: bmc.PowerOn, want: "1"},
 		{action: bmc.PowerCycle, want: "2"},
 		{action: bmc.PowerReset, want: "3"},
-		{action: bmc.PowerSoftOff, want: "4"},
+		{action: bmc.PowerSoftOff, want: "5"}, // 4 would be an NMI
 		{action: "power_explode", wantErr: true},
 	}
 

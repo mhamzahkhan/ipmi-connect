@@ -222,7 +222,10 @@ ST2: <ST2_TOKEN>
 - `1`: Power On (Chassis power up)
 - `2`: Power Cycle (Power off followed by power on)
 - `3`: Hard Reset (Immediate motherboard hardware reset)
-- `4`: Graceful ACPI Shutdown / Diagnostic Interrupt (NMI)
+- `4`: Diagnostic Interrupt (NMI)
+- `5`: Graceful ACPI shutdown
+
+These follow the IPMI Chassis Control command codes. The KVM viewer's own power menu uses a separate control-channel packet (ID 1060, `SetPowerState`) with different numbering: 1 On, 2 Off, 3 Cycle, 4 Reboot, 5 Graceful Shutdown.
 
 ### 7.2 Session Keepalive Endpoint
 To prevent the AppWeb WebGUI session from expiring (~45-60 second idle timeout), send periodic keepalive heartbeats:
@@ -302,13 +305,17 @@ If the connection is interrupted for any external reason (e.g. host reset, resol
 - **Alpha Opacity**: The ASPEED bitstream encodes only YUV data. Decoders (both WASM and pure JS) must explicitly set the alpha channel to full opacity (`A = 255` / `|= 0xFF000000`), otherwise the HTML5 canvas blends the image into transparent/washed-out grey.
 - **Canvas Resize Guard**: HTML5 canvas clears its entire buffer whenever `canvas.width` or `canvas.height` is assigned. To prevent small tile updates (e.g., cursor blinks at `(0, 0)` with width 14 and height 16) from wiping the screen, only resize the canvas when `w >= 320 && h >= 200`.
 
-### 8.8 ASPEED AST2300 Analog VGA ADC Pedestal & Auto-Contrast Engine
-- **Analog Voltage Pedestal**: The ASPEED AST2300 video engine digitizes analog VGA DAC signals through its on-chip ADC. Due to analog circuit design and DC bias on the Dell C6220 II motherboard, the ADC digitizes black ($0\text{V}$) at intensity value ~101–103 and full white ($0.7\text{V}$) at ~133–135. The entire screen output is compressed into a 32-level dynamic range, causing the BIOS screen to appear washed-out grey (`#656565`) instead of true black (`#000000`).
-- **Real-Time Percentile Calibration**:
-  1. On each full frame (`x == 0 && y == 0 && w >= 320 && h >= 200`), the client computes a 256-bin luminance histogram.
-  2. Finds the dominant background mode (`modeVal`, representing ~80-95% of pixels) and the 99.9th percentile highlight peak (`p99`).
-  3. **Adaptive Guard**: If $p_{01} \ge 30$ and $(p_{99} - p_{01}) \le 160$ (indicating an analog DC offset), it generates a 256-byte look-up table (LUT) that clamps $v \le \text{modeVal}$ to 0 (true black) and $v \ge p_{99}$ to 255 (crisp white).
-  4. If the display is already full range ($p_{01} < 30$ or range $> 160$, such as an OS desktop or Supermicro host), the LUT remains identity (`lut[i] = i`) so colors are never crushed.
-- **Sub-frame Tile Inheritance**: Partial updates and delta tiles (cursor blink, typing text) automatically inherit the calibrated LUT from the last full frame, preventing tile borders or color mismatch.
-- **Header Toolbar Control**: The `#btnAutoContrast` button in the header toolbar allows users to toggle True Black on/off at will. Toggling re-renders the cached frame immediately and dispatches `{ type: "refresh" }` to request a fresh frame from the BMC.
+### 8.8 Washed-out picture: a decoder bug, not an analog offset
+Earlier versions saw black decoded at ~101 and white at ~134 and blamed an analog VGA ADC
+pedestal, correcting it with an auto-contrast LUT in the browser. Testing on the C6220 showed
+the real cause: byte 11 of each `ib` packet carries the **luma** quantisation table in its high
+nibble and the **chroma** table in its low nibble (this BMC uses luma 4, chroma 7), and the client
+was decoding with the chroma table only. Decoding the same live stream both ways:
 
+| Decode | Black level (1st percentile luma) |
+| :--- | :--- |
+| Chroma table for everything (old) | 101 |
+| Luma 4 / chroma 7 (correct) | 6 |
+
+The auto-contrast LUT's guard only engages when black sits above 30, so with correct decoding it
+stays inactive. It remains in the UI for now and is a candidate for removal.
