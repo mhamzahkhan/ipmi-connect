@@ -16,12 +16,16 @@ const (
 	pktSetScale1to1  uint16 = 772    // p:  "SetScaleMode1to1", sent once when enabling video
 	pktEnableVideo   uint16 = 782    // fb
 	pktHeartbeat     uint16 = 0x0400 // q:  keeps the 30s control-channel watchdog quiet
+
+	pktRequestVMCredentials uint16 = 0x0427 // s: asks for one-time virtual media tokens (payload u32 30)
+	pktVMCredentials        uint16 = 0x8434 // k: user and password tokens, 32 bytes each, NUL-padded
 )
 
 // APCP channel modes sent in the 53-byte greeting.
 const (
 	channelModeControl byte = 3 // auth, input, heartbeats
 	channelModeVideo   byte = 4 // ASPEED bitstream and ACKs
+	channelModeVMedia  byte = 2 // AVMP virtual media
 )
 
 // serverPacketNames are the class names decrypted from the C6220's viewer, for logging.

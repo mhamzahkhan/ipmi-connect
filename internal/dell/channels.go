@@ -22,6 +22,28 @@ import (
 // The returned connection still carries the handshake deadline, so the caller's authentication
 // exchange is bounded too; callers clear it once authenticated.
 func (c *Client) connectAPCP(port int, mode byte) (net.Conn, error) {
+	return c.connectAPCPVersion(port, mode, 2, 34) // the KVM viewer's version bytes
+}
+
+// apcpGreeting builds the 53-byte session request.
+func apcpGreeting(mode, major, minor byte, nonce []byte) []byte {
+	var buf bytes.Buffer
+	buf.WriteString("APCP")
+	_ = binary.Write(&buf, binary.BigEndian, uint32(53))
+	_ = binary.Write(&buf, binary.BigEndian, uint16(0x0100))
+	_ = binary.Write(&buf, binary.BigEndian, uint16(0x0000))
+	buf.WriteByte(mode)
+	buf.WriteByte(major)
+	buf.WriteByte(minor)
+	buf.WriteByte(0)
+	_ = binary.Write(&buf, binary.BigEndian, uint32(5)) // cleartext | anonymous TLS
+	buf.WriteByte(32)
+	buf.Write(nonce)
+	return buf.Bytes()
+}
+
+// connectAPCPVersion is connectAPCP with explicit version bytes; the virtual media client sends 0.0.
+func (c *Client) connectAPCPVersion(port int, mode, major, minor byte) (net.Conn, error) {
 	addr := net.JoinHostPort(c.Host, strconv.Itoa(port))
 	rawConn, err := net.DialTimeout("tcp", addr, dialTimeout)
 	if err != nil {
@@ -35,20 +57,7 @@ func (c *Client) connectAPCP(port int, mode byte) (net.Conn, error) {
 		return nil, bmc.FormatError("Dell connectAPCP rand.Read", err)
 	}
 
-	var buf bytes.Buffer
-	buf.WriteString("APCP")
-	_ = binary.Write(&buf, binary.BigEndian, uint32(53))
-	_ = binary.Write(&buf, binary.BigEndian, uint16(0x0100))
-	_ = binary.Write(&buf, binary.BigEndian, uint16(0x0000))
-	buf.WriteByte(mode)
-	buf.WriteByte(2)
-	buf.WriteByte(34)
-	buf.WriteByte(0)
-	_ = binary.Write(&buf, binary.BigEndian, uint32(5))
-	buf.WriteByte(32)
-	buf.Write(nonce)
-
-	if _, err := rawConn.Write(buf.Bytes()); err != nil {
+	if _, err := rawConn.Write(apcpGreeting(mode, major, minor, nonce)); err != nil {
 		rawConn.Close()
 		return nil, bmc.FormatError("Dell connectAPCP write handshake", err)
 	}

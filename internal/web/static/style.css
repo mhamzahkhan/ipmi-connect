@@ -270,6 +270,27 @@ body {
   background-color: var(--border-color);
 }
 
+.media-path {
+  width: 220px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--text-muted);
+  border-radius: 4px;
+}
+
+.media-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.media-status.error {
+  color: var(--warning);
+}
+
 .stat-notice {
   color: var(--warning);
   font-weight: 600;

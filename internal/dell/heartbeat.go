@@ -79,6 +79,12 @@ func (c *Client) drainControl(stopCh <-chan struct{}) {
 			c.Close()
 			return
 		}
+		if pkt.ID == pktVMCredentials {
+			select {
+			case c.vmCreds <- pkt.Payload:
+			default: // nobody asked, or an answer is already waiting
+			}
+		}
 		if !seen[pkt.ID] {
 			seen[pkt.ID] = true
 			log.Printf("[Dell] Control channel: first %s (0x%04x, %d bytes)", packetName(pkt.ID), pkt.ID, len(pkt.Payload))

@@ -63,6 +63,12 @@ type Client struct {
 	ctrlWriteMu           sync.Mutex // serialises writes on CtrlConn
 	videoWriteMu          sync.Mutex // serialises writes on VideoConn
 	loggingOut            atomic.Bool
+
+	vmCreds chan []byte // 0x8434 payloads, handed from the control reader to MountISO
+	mediaMu sync.Mutex  // guards media and mediaErr
+	media   *mediaMount
+	// mediaErr is why the last mount ended, if it failed; shown until the next mount.
+	mediaErr string
 }
 
 // NewClient creates a new Dell BMC client.
@@ -76,6 +82,7 @@ func NewClient(host, user, pass string) *Client {
 		KMPort:       defaultKVMPort,
 		VPort:        defaultKVMPort,
 		ClientRandom: uint32(time.Now().UnixNano() & 0x7FFFFFFF),
+		vmCreds:      make(chan []byte, 1),
 	}
 }
 

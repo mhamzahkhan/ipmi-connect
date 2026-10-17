@@ -91,6 +91,17 @@
         <button class="btn-macro" data-macro="f12">F12 (PXE)</button>
       </div>
 
+      <div class="macro-divider media-only" hidden></div>
+
+      <!-- Virtual CD: shown only for BMCs that support it -->
+      <div class="macro-group media-group media-only" hidden>
+        <span class="macro-label">Virtual CD:</span>
+        <input type="text" class="media-path" id="mediaPath" placeholder="/full/path/to/image.iso" spellcheck="false" autocomplete="off">
+        <button class="btn-macro" id="btnMediaMount">Mount</button>
+        <button class="btn-macro" id="btnMediaEject" hidden>Eject</button>
+        <span class="media-status" id="mediaStatus"></span>
+      </div>
+
       <div class="macro-stats" id="streamStats">
         <span class="stat-notice" id="statNotice" hidden></span>
         <span id="statRes">Resolution: -- x --</span>

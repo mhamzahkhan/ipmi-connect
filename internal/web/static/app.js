@@ -88,6 +88,7 @@ import { KEY_TO_HID } from '/keymap.js';
     setupMouseAndKeyboard();
     setupPowerButtons();
     setupMacros();
+    setupMedia();
     setupFullscreenAndScreenshot();
     pollStatus();
     setInterval(pollStatus, 3000);
@@ -282,6 +283,75 @@ import { KEY_TO_HID } from '/keymap.js';
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) releaseAll();
     });
+  }
+
+  // Virtual CD
+  function formatBytes(n) {
+    if (n < 1024 * 1024) return `${Math.round(n / 1024)} KiB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+  }
+
+  function showMedia(st) {
+    const status = document.getElementById('mediaStatus');
+    const mounted = st.state === 'mounted';
+    const busy = mounted || st.state === 'mounting';
+    // While mounting, Eject cancels the attempt.
+    document.getElementById('btnMediaMount').hidden = busy;
+    document.getElementById('btnMediaEject').hidden = !busy;
+    document.getElementById('mediaPath').disabled = busy;
+    status.classList.toggle('error', Boolean(st.error));
+    if (mounted) status.textContent = `${st.image} attached, ${formatBytes(st.bytes_served)} read`;
+    else if (busy) status.textContent = `Mounting ${st.image}…`;
+    else status.textContent = st.error ? `Ended: ${st.error}` : '';
+  }
+
+  async function pollMedia() {
+    if (signedOut) return;
+    try {
+      const resp = await apiFetch('/api/media');
+      if (resp.status === 501) return; // this BMC has no virtual media
+      document.querySelectorAll('.media-only').forEach((el) => { el.hidden = false; });
+      if (resp.ok) showMedia(await resp.json());
+    } catch (e) {
+      console.warn('Media poll error:', e);
+    }
+  }
+
+  async function mediaRequest(method, body) {
+    const status = document.getElementById('mediaStatus');
+    const options = { method };
+    if (body) {
+      options.headers = { 'Content-Type': 'application/json' };
+      options.body = JSON.stringify(body);
+    }
+    const resp = await apiFetch('/api/media', options);
+    const res = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      status.classList.add('error');
+      status.textContent = res.error || `Failed (HTTP ${resp.status})`;
+      return;
+    }
+    showMedia(res);
+  }
+
+  function setupMedia() {
+    const mount = document.getElementById('btnMediaMount');
+    mount.addEventListener('click', async () => {
+      const path = document.getElementById('mediaPath').value.trim();
+      if (!path) return;
+      mount.disabled = true;
+      const status = document.getElementById('mediaStatus');
+      status.classList.remove('error');
+      status.textContent = 'Mounting…';
+      try {
+        await mediaRequest('POST', { path });
+      } finally {
+        mount.disabled = false;
+      }
+    });
+    document.getElementById('btnMediaEject').addEventListener('click', () => mediaRequest('DELETE'));
+    pollMedia();
+    setInterval(pollMedia, 3000);
   }
 
   // Macro Toolbar

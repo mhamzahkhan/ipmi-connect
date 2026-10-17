@@ -127,7 +127,8 @@ func (c *Client) Login() error {
 
 // Logout releases the GUI session on the BMC.
 func (c *Client) Logout() {
-	c.loggingOut.Store(true)
+	c.loggingOut.Store(true) // first, so no new mount can start
+	c.ejectOnLogout()
 	c.SessionMu.Lock()
 	defer c.SessionMu.Unlock()
 
