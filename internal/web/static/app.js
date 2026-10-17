@@ -1,6 +1,4 @@
 // IPMI Modern Console - Client App
-import { decode } from '/aspeed/decoder.js';
-import { buildContrastLUT, applyLUT, identityLUT } from '/contrast.js';
 import { KEY_TO_HID } from '/keymap.js';
 
 (function() {
@@ -37,9 +35,6 @@ import { KEY_TO_HID } from '/keymap.js';
   let frameCount = 0;
   let lastFPSCheck = performance.now();
   let currentPowerAction = null;
-  let autoContrastEnabled = true;
-  let contrastLUT = identityLUT();
-  let lastCachedFrame = null;
 
   // Initialize
   // Session: the launch link carries a one-time code in its fragment (#c=...), exchanged once for
@@ -96,7 +91,6 @@ import { KEY_TO_HID } from '/keymap.js';
     setupPowerButtons();
     setupMacros();
     setupFullscreenAndScreenshot();
-    setupAutoContrast();
     pollStatus();
     setInterval(pollStatus, 3000);
   }
@@ -178,17 +172,9 @@ import { KEY_TO_HID } from '/keymap.js';
     }
   }
 
-  // True-black calibration (see contrast.js)
-  function calibrateContrast(pixels) {
-    contrastLUT = autoContrastEnabled ? buildContrastLUT(pixels) : identityLUT();
-  }
-
-  function applyContrast(pixels) {
-    if (!autoContrastEnabled) return;
-    applyLUT(contrastLUT, pixels);
-  }
-
-  // Handle video frame
+  // Video: the server decodes the BMC stream and sends RGBA.
+  //   0x02 full frame: [u16 width][u16 height][RGBA]
+  //   0x04 changes:    [u16 count] then per rect [u16 x][u16 y][u16 w][u16 h][RGBA]
   function handleBinaryFrame(buf) {
     frameCount++;
     const now = performance.now();
@@ -199,66 +185,24 @@ import { KEY_TO_HID } from '/keymap.js';
     }
 
     const view = new DataView(buf);
-    const magic = view.getUint8(0);
-
-    if (magic === 0x01) {
-      // JPEG / PNG Frame
-      const blob = new Blob([new Uint8Array(buf, 5)], { type: 'image/jpeg' });
-      createImageBitmap(blob).then(bitmap => {
-        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-        bitmap.close();
-      }).catch(err => {
-        const img = new Image();
-        img.onload = () => {
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          URL.revokeObjectURL(img.src);
-        };
-        img.src = URL.createObjectURL(blob);
-      });
-    } else if (magic === 0x02) {
-      // Raw RGBA 32-bit Frame
+    const type = view.getUint8(0);
+    if (type === 0x02) {
       const w = view.getUint16(1);
       const h = view.getUint16(3);
       if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
+        canvas.width = w; // resizing clears the canvas; the full frame repaints it
         canvas.height = h;
         statRes.textContent = `Resolution: ${w} x ${h}`;
       }
-      lastCachedFrame = buf.slice(0);
-      const rawPixels = new Uint8ClampedArray(buf.slice(5));
-      calibrateContrast(rawPixels);
-      applyContrast(rawPixels);
-      const imgData = new ImageData(rawPixels, w, h);
-      ctx.putImageData(imgData, 0, 0);
-    } else if (magic === 0x03) {
-      // ASPEED frame: 1 mode420, 2 luma table, 3 chroma table, 4..7 reserved,
-      // 8..9 width, 10..11 height, 12.. bitstream. Every frame covers the screen from (0,0).
-      const w = view.getUint16(8);
-      const h = view.getUint16(10);
-      const header = {
-        width: w,
-        height: h,
-        mode420: view.getUint8(1),
-        selector: view.getUint8(2),
-        chroma_selector: view.getUint8(3),
-        advance_selector: 0
-      };
-
-      try {
-        // decode() returns the decoder's own frame buffer, which is also the reference for the
-        // next delta frame: work on a copy so contrast correction never feeds back into it.
-        const pixels = new Uint8ClampedArray(decode(header, new Uint8Array(buf, 12)));
-        if (canvas.width !== w || canvas.height !== h) {
-          canvas.width = w;
-          canvas.height = h;
-          statRes.textContent = `Resolution: ${w} x ${h}`;
-        }
-        lastCachedFrame = buf.slice(0);
-        calibrateContrast(pixels);
-        applyContrast(pixels);
-        ctx.putImageData(new ImageData(pixels, w, h), 0, 0);
-      } catch (err) {
-        console.warn('Aspeed decode error:', err);
+      ctx.putImageData(new ImageData(new Uint8ClampedArray(buf, 5, w * h * 4), w, h), 0, 0);
+    } else if (type === 0x04) {
+      let off = 3;
+      for (let n = view.getUint16(1); n > 0; n--) {
+        const x = view.getUint16(off), y = view.getUint16(off + 2);
+        const w = view.getUint16(off + 4), h = view.getUint16(off + 6);
+        off += 8;
+        ctx.putImageData(new ImageData(new Uint8ClampedArray(buf, off, w * h * 4), w, h), x, y);
+        off += w * h * 4;
       }
     }
   }
@@ -419,32 +363,6 @@ import { KEY_TO_HID } from '/keymap.js';
       a.download = `ipmi-console-${Date.now()}.png`;
       a.href = canvas.toDataURL('image/png');
       a.click();
-    });
-  }
-
-  // Auto-Contrast / True Black Calibration Setup
-  function setupAutoContrast() {
-    const btn = document.getElementById('btnAutoContrast');
-    if (!btn) return;
-
-    btn.addEventListener('click', () => {
-      autoContrastEnabled = !autoContrastEnabled;
-      if (autoContrastEnabled) {
-        btn.classList.add('active');
-      } else {
-        btn.classList.remove('active');
-        contrastLUT = identityLUT();
-      }
-
-      // Re-render cached frame immediately if available
-      if (lastCachedFrame) {
-        handleBinaryFrame(lastCachedFrame);
-      }
-
-      // Request fresh full frame from BMC
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'refresh' }));
-      }
     });
   }
 

@@ -84,32 +84,6 @@ func TestWebSocketRejectsCrossSiteOrigin(t *testing.T) {
 	}
 }
 
-func TestBroadcastResyncsClientsThatFallBehind(t *testing.T) {
-	fc := &fakeConsole{}
-	srv := NewServer(0, bmc.SessionState{})
-	srv.Console = fc
-	slow := newWSClient()
-	fast := newWSClient()
-	srv.addClient(slow)
-	srv.addClient(fast)
-
-	for i := 0; i < clientQueueLen; i++ {
-		srv.broadcast([]byte{byte(i)})
-	}
-	for len(fast.out) > 0 { // the fast client keeps up
-		<-fast.out
-	}
-	srv.broadcast([]byte{0xFF}) // slow client's queue is full
-
-	if got := len(slow.out); got != 0 {
-		t.Errorf("slow client still holds %d stale frames; deltas on top of a gap corrupt the picture", got)
-	}
-	if got := len(fast.out); got != 1 {
-		t.Errorf("fast client has %d frames queued, want 1", got)
-	}
-	eventually(t, func() bool { _, r := fc.snapshot(); return r == 1 })
-}
-
 func TestWebSocketRequiresSession(t *testing.T) {
 	_, url := startTestServer(t, &fakeConsole{})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -122,24 +96,6 @@ func TestWebSocketRequiresSession(t *testing.T) {
 	}
 	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %v, want 401", resp)
-	}
-}
-
-// A resync requested within resyncInterval of the previous one must be postponed, not dropped:
-// the browser whose backlog was discarded has no other way back to a full frame.
-func TestRequestResyncPostponesInsteadOfDropping(t *testing.T) {
-	fc := &fakeConsole{}
-	srv := NewServer(0, bmc.SessionState{})
-	srv.Console = fc
-
-	srv.requestResync()
-	srv.requestResync() // too soon: must be scheduled
-	srv.requestResync() // coalesces with the scheduled one
-
-	eventually(t, func() bool { _, r := fc.snapshot(); return r == 1 })
-	time.Sleep(resyncInterval + 200*time.Millisecond)
-	if _, r := fc.snapshot(); r != 2 {
-		t.Errorf("refreshes = %d, want 2 (one immediate, one postponed)", r)
 	}
 }
 
@@ -192,5 +148,33 @@ func TestRunReleasesHeldInputBeforeReturning(t *testing.T) {
 	}
 	if keys, _ := fc.snapshot(); !reflect.DeepEqual(keys, []keyEvent{{true, 225}, {false, 225}}) {
 		t.Errorf("keys at return = %v; the held key must be released before logout", keys)
+	}
+}
+
+func TestBroadcastGivesClientsThatFallBehindTheFullPicture(t *testing.T) {
+	srv := NewServer(0, bmc.SessionState{})
+	slow, fast := newWSClient(), newWSClient()
+	srv.addClient(slow)
+	srv.addClient(fast)
+	const w, h = 32, 16
+	srv.UpdateScreen(w, h, solid(w, h, 0))
+	<-fast.out
+
+	// The initial full frame plus clientQueueLen-1 changes fill the slow queue; change number
+	// clientQueueLen overflows it.
+	for i := 1; i <= clientQueueLen; i++ {
+		pix := solid(w, h, 0)
+		setPixel(pix, w, i%w, 0, byte(i))
+		srv.UpdateScreen(w, h, pix)
+		for len(fast.out) > 0 {
+			<-fast.out
+		}
+	}
+
+	if len(slow.out) != 1 {
+		t.Fatalf("slow client has %d messages queued, want just the full picture", len(slow.out))
+	}
+	if m := <-slow.out; m.data[0] != msgFullFrame {
+		t.Errorf("slow client got type %#x, want a full frame", m.data[0])
 	}
 }

@@ -16,7 +16,7 @@ The protocols were reverse-engineered from the vendors' JARs. Nothing from those
 | Feature | Dell | Supermicro |
 | :--- | :--- | :--- |
 | Login / clean logout | Works | Works |
-| Live video | Works (ASPEED decoder, true-black calibration) | **Not implemented**: shows a blank placeholder |
+| Live video | Works (Go ASPEED decoder, verified frame-for-frame against Aspeed's reference) | **Not implemented**: shows a blank placeholder |
 | Keyboard | Works (USB HID) | **Broken**: sends DOM `keyCode` as X11 keysym |
 | Mouse | Works | Works (RFB PointerEvent) |
 | Macros (Ctrl+Alt+Del, F-keys…) | Works | Works |
@@ -25,7 +25,7 @@ The protocols were reverse-engineered from the vendors' JARs. Nothing from those
 
 ## Quick start
 
-Requires Go 1.27+ (and Node 18+ only to run the JS tests).
+Requires Go 1.27+.
 
 ```bash
 make build                                   # -> bin/ipmi-connect
@@ -48,7 +48,7 @@ Press Ctrl+C to exit. The client logs out first, because the Dell allows only **
 
 ```bash
 make            # lint, test, build
-make test       # go test -race ./... and node --test for the UI modules
+make test       # go test -race ./...
 make lint       # go vet + golangci-lint (config in .golangci.yml)
 make fmt
 ```
@@ -62,8 +62,8 @@ internal/
   dell/                Avocent client: web session, APCP channels, heartbeat, video, input, power
   supermicro/          ATEN client: CGI session, RFB handshake and input, power
   web/                 Local HTTP/WebSocket server, key macros, frame broadcast
-    static/            Embedded UI: app.js, contrast.js (true black), keymap.js, aspeed/ decoder
-    jstest/            node --test unit tests for the UI modules
+    static/            Embedded UI: app.js (paints RGBA frames), keymap.js
+  aspeed/              ASPEED video decoder (Go port of Aspeed's MPL-2.0 reference)
 docs/                  Hardware inventory, protocol specs, per-vendor deep dives
 ```
 

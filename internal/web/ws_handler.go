@@ -40,22 +40,23 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	resize, _ := json.Marshal(map[string]any{"type": "resize", "width": width, "height": height})
 	client.out <- outMessage{typ: websocket.MessageText, data: resize}
 
-	s.LastFrameMu.RLock()
-	if len(s.LastFrame) > 0 {
-		client.out <- outMessage{typ: websocket.MessageBinary, data: s.LastFrame}
-	}
-	s.LastFrameMu.RUnlock()
-
+	// Register before taking the snapshot: a change broadcast in between arrives before the
+	// full frame, which then supersedes it.
 	s.addClient(client)
 	defer s.removeClient(client)
+	full := s.fullFrameMessage()
+	if full != nil {
+		client.out <- outMessage{typ: websocket.MessageBinary, data: full}
+	}
 
 	var input *inputState
 	if s.Console != nil {
 		input = newInputState(s.Console)
 		defer input.releaseAll() // a closed tab must not leave keys or buttons held on the host
-		// Ask for a complete frame so this browser can render without waiting for changes.
-		if err := s.Console.RequestFrameRefresh(); err != nil {
-			log.Printf("[WS] Refresh for new client: %v", err)
+		if full == nil {         // nothing decoded yet: ask the BMC for a complete frame
+			if err := s.Console.RequestFrameRefresh(); err != nil {
+				log.Printf("[WS] Refresh for new client: %v", err)
+			}
 		}
 	}
 

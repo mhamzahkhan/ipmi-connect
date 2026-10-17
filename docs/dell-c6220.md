@@ -173,7 +173,7 @@ Without this ACK, the AST2300 hardware video engine halts streaming after 1-2 fr
 
 ### 5.3 Frame Assembly & Decoder
 1. Chunks with `isFirstChunk = true` indicate the beginning of a frame. Continuation chunks (`isFirstChunk = false`) are appended.
-2. Complete frames go to Aspeed's JS decoder (`decoder_js.js`, patched to take separate luma and chroma table selectors), which decompresses the AST2300 VQ/DCT stream to RGBA32 pixels for the HTML5 `<canvas>`. Each frame updates the whole screen from the origin; byte 11's high nibble selects the luma table and its low nibble the chroma table.
+2. Complete frames are decoded in Go (`internal/aspeed`, a port of Aspeed's MPL-2.0 JS decoder, checked bit for bit against it on recorded C6220 video and random streams) into a server-side framebuffer. Browsers receive the full picture once and then only changed 16x16 tiles as RGBA. Each frame updates the whole screen from the origin; byte 11's high nibble selects the luma table and its low nibble the chroma table.
 
 ---
 
@@ -317,5 +317,4 @@ was decoding with the chroma table only. Decoding the same live stream both ways
 | Chroma table for everything (old) | 101 |
 | Luma 4 / chroma 7 (correct) | 6 |
 
-The auto-contrast LUT's guard only engages when black sits above 30, so with correct decoding it
-stays inactive. It remains in the UI for now and is a candidate for removal.
+The auto-contrast correction was removed once decoding was fixed.

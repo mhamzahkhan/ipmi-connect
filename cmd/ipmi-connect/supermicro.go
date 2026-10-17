@@ -68,7 +68,7 @@ func streamSupermicroVideo(ctx context.Context, srv *web.Server, conn net.Conn, 
 		rgbaBuffer[i+3] = 255
 	}
 
-	srv.SendRawRGBA(width, height, rgbaBuffer)
+	srv.UpdateScreen(width, height, rgbaBuffer)
 
 	// FramebufferUpdateRequest: type 3, incremental flag, x, y, width, height.
 	req := []byte{3, 0, 0, 0, 0, 0, byte(width >> 8), byte(width & 0xFF), byte(height >> 8), byte(height & 0xFF)}
@@ -103,7 +103,7 @@ func streamSupermicroVideo(ctx context.Context, srv *web.Server, conn net.Conn, 
 			}
 
 			if n > 0 && buf[0] == 0 { // FramebufferUpdate
-				srv.SendRawRGBA(width, height, rgbaBuffer)
+				srv.UpdateScreen(width, height, rgbaBuffer)
 			}
 		}
 	}

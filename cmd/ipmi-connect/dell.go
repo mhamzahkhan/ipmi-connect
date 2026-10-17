@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"ipmi-connect/internal/aspeed"
 	"ipmi-connect/internal/dell"
 	"ipmi-connect/internal/web"
 )
@@ -104,13 +105,24 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 	var width, height uint16
 	lastPktTime := time.Now()
 	seenSelectors := map[[2]byte]bool{}
+	decoder := aspeed.NewDecoder()
 
-	// send forwards a whole frame. Every frame covers the screen from the origin.
+	// send decodes a whole frame into the picture and hands it to the browsers. Every frame covers
+	// the screen from the origin. The decoder keeps state across frames (and reconnects): each
+	// frame only updates blocks of the previous picture.
 	send := func(f *dell.VideoPacket) {
 		if f == nil {
 			return
 		}
-		srv.SendAspeedFrame(f.Mode420, f.LumaSelector, f.ChromaSelector, f.Width, f.Height, f.Bitstream)
+		h := aspeed.Header{
+			Width: int(f.Width), Height: int(f.Height), Mode420: f.Mode420,
+			LumaSelector: f.LumaSelector, ChromaSelector: f.ChromaSelector,
+		}
+		if err := decoder.Decode(h, f.Bitstream); err != nil {
+			log.Printf("[Dell] Dropping undecodable frame: %v", err)
+			return
+		}
+		srv.UpdateScreen(h.Width, h.Height, decoder.Frame())
 	}
 
 	for {
@@ -158,7 +170,6 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 			if pkt.Width != width || pkt.Height != height {
 				width, height = pkt.Width, pkt.Height
 				log.Printf("[Dell] Host video mode is %dx%d", width, height)
-				srv.SetScreenSize(int(width), int(height))
 			}
 			if sel := [2]byte{pkt.LumaSelector, pkt.ChromaSelector}; !seenSelectors[sel] {
 				seenSelectors[sel] = true

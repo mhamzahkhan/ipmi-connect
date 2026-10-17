@@ -31,10 +31,8 @@ type Server struct {
 	StateMu        sync.RWMutex
 	Console        bmc.Console // set once before Run; nil until the BMC is connected
 	clients        map[*wsClient]struct{}
-	clientsMu      sync.Mutex // guards clients, lastResync and resyncPending
-	lastResync     time.Time
-	resyncPending  bool
-	Port           int // guarded by sessionMu once Run starts
+	clientsMu      sync.Mutex // guards clients
+	Port           int        // guarded by sessionMu once Run starts
 	HTTPServer     *http.Server
 	token          string     // per-run secret required by the API and WebSocket
 	launchCode     string     // one-time code in the launch link, exchanged for token
@@ -43,11 +41,15 @@ type Server struct {
 
 	// Sockets are hijacked, so HTTPServer.Shutdown does not stop them: Run cancels connCtx and
 	// waits on connWG so each socket releases its held input before main logs out.
-	connCtx     context.Context
-	connCancel  context.CancelFunc
-	connWG      sync.WaitGroup
-	LastFrame   []byte // latest raw RGBA frame, replayed to new browsers
-	LastFrameMu sync.RWMutex
+	connCtx    context.Context
+	connCancel context.CancelFunc
+	connWG     sync.WaitGroup
+
+	// The host's current picture (RGBA), kept so new browsers, slow browsers and screenshots
+	// get a complete frame without asking the BMC.
+	screenMu         sync.Mutex
+	screen           []byte
+	screenW, screenH int
 }
 
 // NewServer initializes a new Web UI server.
@@ -75,6 +77,7 @@ func (s *Server) routes() (http.Handler, error) {
 	mux.Handle("/", http.FileServer(http.FS(subFS)))
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/power", s.handlePower)
+	mux.HandleFunc("/api/screenshot.png", s.handleScreenshot)
 	mux.HandleFunc("/ws", s.handleWS)
 	return s.guard(mux), nil
 }

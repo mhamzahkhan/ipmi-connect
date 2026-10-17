@@ -23,11 +23,9 @@ func TestRoutesServeEmbeddedUI(t *testing.T) {
 		wantBodySnippet string
 	}{
 		{"/", "text/html", "screenCanvas"},
-		{"/app.js", "application/javascript", "aspeed/decoder.js"},
+		{"/app.js", "application/javascript", "keymap.js"},
 		{"/style.css", "text/css", ""},
-		{"/contrast.js", "application/javascript", "export function buildContrastLUT"},
 		{"/keymap.js", "application/javascript", "export const KEY_TO_HID"},
-		{"/aspeed/decoder.js", "application/javascript", "export function decode"},
 	}
 
 	for _, tt := range tests {

@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/coder/websocket"
@@ -13,8 +12,6 @@ const (
 	clientQueueLen = 16
 	// clientWriteTimeout drops a browser that stops reading.
 	clientWriteTimeout = 5 * time.Second
-	// resyncInterval rate-limits full-frame requests triggered by slow browsers.
-	resyncInterval = time.Second
 )
 
 type outMessage struct {
@@ -74,28 +71,26 @@ func (s *Server) removeClient(c *wsClient) {
 	delete(s.clients, c)
 }
 
-// broadcast queues a video frame for every browser. A browser whose queue is full has fallen
-// behind: video frames are deltas, so its backlog is discarded and the BMC is asked for a full
-// frame instead of letting it paint updates on top of a gap.
+// broadcast queues a change (rects) for every browser. A browser whose queue is full has fallen
+// behind; changes only make sense on top of everything before them, so its backlog is replaced
+// with the current full picture.
 func (s *Server) broadcast(frame []byte) {
-	clients := s.clientList()
 	msg := outMessage{typ: websocket.MessageBinary, data: frame}
-	behind := false
-	for _, c := range clients {
+	var full []byte
+	for _, c := range s.clientList() {
 		select {
 		case c.out <- msg:
 		default:
-			c.drain()
-			behind = true
+			if full == nil {
+				full = s.fullFrameMessage()
+			}
+			c.queueFullFrame(full)
 		}
-	}
-	if behind {
-		s.requestResync()
 	}
 }
 
-// broadcastFull queues a self-contained frame (raw RGBA). Each one supersedes the last, so a
-// browser keeps only the newest instead of a backlog of multi-megabyte frames.
+// broadcastFull queues a full frame. Each one supersedes everything before it, so a browser keeps
+// only the newest instead of a backlog of multi-megabyte frames.
 func (s *Server) broadcastFull(frame []byte) {
 	msg := outMessage{typ: websocket.MessageBinary, data: frame}
 	for _, c := range s.clientList() {
@@ -115,38 +110,4 @@ func (s *Server) clientList() []*wsClient {
 		clients = append(clients, c)
 	}
 	return clients
-}
-
-// requestResync asks the console for a full frame. Requests closer together than resyncInterval
-// are postponed and coalesced, never dropped: a browser whose backlog was discarded has no other
-// way back to a complete picture.
-func (s *Server) requestResync() {
-	s.clientsMu.Lock()
-	if s.Console == nil || s.resyncPending {
-		s.clientsMu.Unlock()
-		return
-	}
-	wait := resyncInterval - time.Since(s.lastResync)
-	if wait <= 0 {
-		s.lastResync = time.Now()
-		s.clientsMu.Unlock()
-		go s.refreshForResync()
-		return
-	}
-	s.resyncPending = true
-	s.clientsMu.Unlock()
-
-	time.AfterFunc(wait, func() {
-		s.clientsMu.Lock()
-		s.resyncPending = false
-		s.lastResync = time.Now()
-		s.clientsMu.Unlock()
-		s.refreshForResync()
-	})
-}
-
-func (s *Server) refreshForResync() {
-	if err := s.Console.RequestFrameRefresh(); err != nil {
-		log.Printf("[WS] Resync refresh: %v", err)
-	}
 }
