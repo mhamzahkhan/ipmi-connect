@@ -32,8 +32,6 @@ import { KEY_TO_HID } from '/keymap.js';
   // State
   let ws = null;
   let isConnected = false;
-  let frameCount = 0;
-  let lastFPSCheck = performance.now();
   let currentPowerAction = null;
 
   // Initialize
@@ -105,6 +103,9 @@ import { KEY_TO_HID } from '/keymap.js';
 
       serverTarget.textContent = data.host || '127.0.0.1';
       vendorBadge.textContent = (data.target_type || 'IPMI').toUpperCase();
+      // The server decodes the stream, so it reports the BMC's frame rate; the browser only sees
+      // changes.
+      statFPS.textContent = `FPS: ${data.fps || 0}`;
 
       // Canvas size is owned by the video stream: resizing a canvas clears it, so status polls
       // must never touch it.
@@ -176,14 +177,6 @@ import { KEY_TO_HID } from '/keymap.js';
   //   0x02 full frame: [u16 width][u16 height][RGBA]
   //   0x04 changes:    [u16 count] then per rect [u16 x][u16 y][u16 w][u16 h][RGBA]
   function handleBinaryFrame(buf) {
-    frameCount++;
-    const now = performance.now();
-    if (now - lastFPSCheck >= 1000) {
-      statFPS.textContent = `FPS: ${frameCount}`;
-      frameCount = 0;
-      lastFPSCheck = now;
-    }
-
     const view = new DataView(buf);
     const type = view.getUint8(0);
     if (type === 0x02) {

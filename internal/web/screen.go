@@ -28,6 +28,10 @@ type rect struct{ x, y, w, h int }
 // what changed: the whole frame on the first update or a resolution change, otherwise only the
 // changed tiles. pix is copied, so callers may reuse their buffer.
 func (s *Server) UpdateScreen(width, height int, pix []byte) {
+	if width <= 0 || height <= 0 || len(pix) < width*height*4 {
+		return // no signal, or a buffer that does not match its size
+	}
+	pix = pix[:width*height*4]
 	s.screenMu.Lock()
 	if s.screen == nil || width != s.screenW || height != s.screenH {
 		s.screen = append([]byte(nil), pix...)
@@ -153,6 +157,22 @@ func (s *Server) handleScreenshot(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(buf.Bytes())
+}
+
+// attachClient registers a browser and queues the current picture for it in one step under
+// screenMu, so no change newer than that snapshot can reach the browser before it.
+func (s *Server) attachClient(c *wsClient) {
+	s.screenMu.Lock()
+	defer s.screenMu.Unlock()
+	s.addClient(c)
+	if s.screen == nil {
+		return
+	}
+	// Not queueFullFrame: that drains the queue, which holds the browser's initial messages.
+	select {
+	case c.out <- outMessage{typ: websocket.MessageBinary, data: encodeFullFrame(s.screenW, s.screenH, s.screen)}:
+	default: // the queue cannot be full yet; never block while holding screenMu
+	}
 }
 
 // queueFullFrame replaces whatever a browser has queued with the current full picture.

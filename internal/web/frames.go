@@ -8,3 +8,11 @@ func (s *Server) SetScreenSize(width, height int) {
 	s.State.ScreenWidth = width
 	s.State.ScreenHeight = height
 }
+
+// SetFPS records the rate at which the BMC is delivering video frames, which /api/status reports.
+// Browsers only receive changes, so they cannot count it themselves.
+func (s *Server) SetFPS(fps int) {
+	s.StateMu.Lock()
+	defer s.StateMu.Unlock()
+	s.State.FPS = fps
+}

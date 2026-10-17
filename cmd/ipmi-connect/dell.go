@@ -106,6 +106,7 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 	lastPktTime := time.Now()
 	seenSelectors := map[[2]byte]bool{}
 	decoder := aspeed.NewDecoder()
+	decoded, fpsStart := 0, time.Now()
 
 	// send decodes a whole frame into the picture and hands it to the browsers. Every frame covers
 	// the screen from the origin. The decoder keeps state across frames (and reconnects): each
@@ -122,6 +123,7 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 			log.Printf("[Dell] Dropping undecodable frame: %v", err)
 			return
 		}
+		decoded++
 		srv.UpdateScreen(h.Width, h.Height, decoder.Frame())
 	}
 
@@ -130,6 +132,11 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 		case <-ctx.Done():
 			return
 		default:
+		}
+
+		if elapsed := time.Since(fpsStart); elapsed >= time.Second {
+			srv.SetFPS(int(float64(decoded)/elapsed.Seconds() + 0.5))
+			decoded, fpsStart = 0, time.Now()
 		}
 
 		readTimeout := dellIdleFrameWait
@@ -156,6 +163,10 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 			frames.take() // a partial frame would decode as garbage
 			if !reconnectDell(ctx, client) {
 				return
+			}
+			// Blocks decoded before the drop may be stale or damaged: start from a full frame.
+			if err := client.RequestFrameRefresh(); err != nil {
+				log.Printf("[Dell] Refresh after reconnect: %v", err)
 			}
 			lastPktTime = time.Now()
 			continue

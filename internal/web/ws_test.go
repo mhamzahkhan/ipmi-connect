@@ -54,7 +54,8 @@ func TestWebSocketSessionReleasesKeysOnClose(t *testing.T) {
 	if err != nil || typ != websocket.MessageText || !strings.Contains(string(data), `"resize"`) {
 		t.Fatalf("first message = %v %q %v, want resize", typ, data, err)
 	}
-	eventually(t, func() bool { _, r := fc.snapshot(); return r == 1 }) // new client asks for a full frame
+	// Every new browser asks the BMC for a full frame, so reloading recovers a damaged picture.
+	eventually(t, func() bool { _, r := fc.snapshot(); return r == 1 })
 
 	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"key","down":true,"hidCode":224}`)); err != nil {
 		t.Fatalf("write: %v", err)
@@ -177,4 +178,19 @@ func TestBroadcastGivesClientsThatFallBehindTheFullPicture(t *testing.T) {
 	if m := <-slow.out; m.data[0] != msgFullFrame {
 		t.Errorf("slow client got type %#x, want a full frame", m.data[0])
 	}
+}
+
+func TestNewClientRequestsRefreshEvenWithAPicture(t *testing.T) {
+	fc := &fakeConsole{}
+	srv, url := startTestServer(t, fc)
+	srv.UpdateScreen(32, 16, solid(32, 16, 1))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL(srv, url), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+	eventually(t, func() bool { _, r := fc.snapshot(); return r == 1 })
 }

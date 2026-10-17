@@ -145,3 +145,51 @@ func TestScreenshotBeforeFirstFrame(t *testing.T) {
 		t.Errorf("status %d, want 503", rec.Code)
 	}
 }
+
+func TestUpdateScreenIgnoresInvalidFrames(t *testing.T) {
+	srv := NewServer(0, bmc.SessionState{})
+	c := newWSClient()
+	srv.addClient(c)
+
+	srv.UpdateScreen(0, 0, nil)                    // no signal
+	srv.UpdateScreen(32, 16, make([]byte, 10))     // short buffer
+	srv.UpdateScreen(32, 16, solid(32, 16, 1))     // valid
+	srv.UpdateScreen(32, 16, make([]byte, 32*4*3)) // short again: must not panic
+
+	if len(c.out) != 1 {
+		t.Fatalf("%d messages queued, want only the valid full frame", len(c.out))
+	}
+	if w, h, _ := srv.screenSnapshot(); w != 32 || h != 16 {
+		t.Errorf("screen %dx%d", w, h)
+	}
+}
+
+// A browser attached while frames are flowing gets the full picture before any change that is
+// newer than it, so a stale snapshot can never overwrite fresher tiles.
+func TestAttachClientQueuesSnapshotAtomically(t *testing.T) {
+	srv := NewServer(0, bmc.SessionState{})
+	srv.UpdateScreen(32, 16, solid(32, 16, 1))
+	c := newWSClient()
+
+	srv.attachClient(c)
+	next := solid(32, 16, 1)
+	setPixel(next, 32, 0, 0, 9)
+	srv.UpdateScreen(32, 16, next)
+
+	if m := <-c.out; m.data[0] != msgFullFrame {
+		t.Fatalf("first message type %#x, want the full frame", m.data[0])
+	}
+	if m := <-c.out; m.data[0] != msgRects {
+		t.Fatalf("second message type %#x, want the newer change", m.data[0])
+	}
+}
+
+func TestSetFPSReportsInStatus(t *testing.T) {
+	srv, h, _ := newGuardedServer(t)
+	srv.SetFPS(35)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(srv, httptest.NewRequest(http.MethodGet, "/api/status", nil)))
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"fps":35`)) {
+		t.Errorf("status %s lacks fps 35", rec.Body.String())
+	}
+}

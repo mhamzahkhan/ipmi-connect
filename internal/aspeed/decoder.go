@@ -25,6 +25,16 @@ type Header struct {
 // ErrShortBitstream reports a bitstream too short to hold the two initial 32-bit words.
 var ErrShortBitstream = errors.New("aspeed: bitstream shorter than 8 bytes")
 
+// ErrFrameTooLarge reports a frame larger than the decoder supports (and than ASPEED video
+// engines produce); a corrupt header must not trigger a huge allocation.
+var ErrFrameTooLarge = errors.New("aspeed: frame larger than 1920x1200")
+
+// Largest frame the decoder accepts; the reference's YUV buffer is sized for it.
+const (
+	MaxWidth  = 1920
+	MaxHeight = 1200
+)
+
 // Block header codes (top 4 bits of the current word).
 const (
 	jpegNoSkip      = 0x00
@@ -51,6 +61,13 @@ const (
 // Decoder decodes successive ASPEED frames. Frames update blocks of the previous picture, so one
 // Decoder must see every frame of a stream, in order.
 type Decoder struct {
+	// ReferenceSemantics reproduces the reference exactly, for differential testing. When false
+	// (the default), two deliberate deviations keep corrupt input from persisting in a picture:
+	// decoding stops once the bitstream's data is exhausted (the reference decodes zero words
+	// until its word index passes the byte length), and a resolution change starts from a clean
+	// buffer (the reference reinterprets the old picture at the new stride).
+	ReferenceSemantics bool
+
 	vqColor      [4]uint32
 	vqIndex      [4]uint8
 	vqBitMapBits int
@@ -112,6 +129,9 @@ func (d *Decoder) Frame() []byte {
 
 // Decode applies one frame's bitstream to the picture.
 func (d *Decoder) Decode(h Header, bitstream []byte) error {
+	if h.Width < 0 || h.Height < 0 || h.Width > MaxWidth || h.Height > MaxHeight {
+		return ErrFrameTooLarge
+	}
 	if d.first || d.luma != h.LumaSelector || d.chroma != h.ChromaSelector || d.advance != h.AdvanceSelector {
 		d.luma, d.chroma, d.advance = h.LumaSelector, h.ChromaSelector, h.AdvanceSelector
 		d.qt[0] = quantTable(&lumaQuantTables, d.luma)
@@ -133,6 +153,9 @@ func (d *Decoder) Decode(h Header, bitstream []byte) error {
 	d.curData = binary.LittleEndian.Uint32(bitstream[0:4])
 	d.nextData = binary.LittleEndian.Uint32(bitstream[4:8])
 
+	if !d.ReferenceSemantics && (h.Width != d.width || h.Height != d.height) {
+		d.out = nil
+	}
 	d.width, d.height = h.Width, h.Height
 	div := 8
 	if d.mode420 == 1 {
@@ -165,6 +188,10 @@ func quantTable(tables *[16][64]int32, sel byte) [64]int32 {
 // byte length, so after the data it keeps decoding zero words until a frame-end code.
 func (d *Decoder) decodeBuffer(length int) {
 	for {
+		// Both lookahead words lie past the data: nothing real is left to decode.
+		if !d.ReferenceSemantics && d.index*4 >= length+8 {
+			return
+		}
 		switch d.currentHeader() {
 		case jpegNoSkip:
 			d.skipBits(blockStartLength)

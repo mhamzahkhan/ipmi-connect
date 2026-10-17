@@ -36,6 +36,7 @@ func TestDecoderMatchesReferenceOnRandomStreams(t *testing.T) {
 		frames := 1 + int(seed.next()%4)
 
 		d := NewDecoder()
+		d.ReferenceSemantics = true
 		for f := 0; f < frames; f++ {
 			h := Header{
 				Width: size[0], Height: size[1], Mode420: mode420,
