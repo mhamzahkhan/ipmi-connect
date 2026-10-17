@@ -27,7 +27,7 @@ func readPacket(conn net.Conn, idle time.Duration) (rawPacket, error) {
 
 	_ = conn.SetReadDeadline(time.Now().Add(packetBodyTimeout))
 	if _, err := io.ReadFull(conn, header[1:]); err != nil {
-		return rawPacket{}, err
+		return rawPacket{}, interrupted(err)
 	}
 
 	magic := binary.BigEndian.Uint32(header[:4])
@@ -42,9 +42,15 @@ func readPacket(conn net.Conn, idle time.Duration) (rawPacket, error) {
 
 	payload := make([]byte, int(length)-beefHeaderLen)
 	if _, err := io.ReadFull(conn, payload); err != nil {
-		return rawPacket{}, err
+		return rawPacket{}, interrupted(err)
 	}
 	return rawPacket{ID: binary.BigEndian.Uint16(header[4:6]), Payload: payload}, nil
+}
+
+// interrupted reports a failure after a packet had started. The stream position is now unknown,
+// so the error deliberately does not wrap err: callers must not mistake it for an idle timeout.
+func interrupted(err error) error {
+	return fmt.Errorf("packet interrupted part-way, stream out of step: %v", err)
 }
 
 // maxPreludePackets bounds how many unrelated packets we skip while waiting for an auth reply.

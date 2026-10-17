@@ -42,8 +42,8 @@ func runDell(ctx context.Context, server *web.Server, host, user, password strin
 		log.Fatalf("[Dell] Login failed: %v", err)
 	}
 
-	if err := client.FetchKVMParameters(); err != nil {
-		log.Printf("[Dell] Notice: fetching JNLP tokens: %v", err)
+	if err := client.RefreshKVMTokens(); err != nil {
+		log.Fatalf("[Dell] Could not get KVM session tokens: %v", err)
 	}
 
 	log.Printf("[Dell] Connecting Control Channel on %s:%d...", host, client.VPort)
@@ -89,40 +89,36 @@ func pollDellSession(ctx context.Context, server *web.Server, client *dell.Clien
 func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) {
 	log.Printf("[Dell] Starting live Aspeed video streaming loop...")
 
-	var frameBuf []byte
-	var cur dell.VideoPacket // geometry and tables of the frame being assembled
+	var frames frameAssembler
+	var width, height uint16
 	lastPktTime := time.Now()
 	seenSelectors := map[[2]byte]bool{}
 
-	flush := func() {
-		if len(frameBuf) == 0 {
+	// send forwards a whole frame. Every frame covers the screen from the origin.
+	send := func(f *dell.VideoPacket) {
+		if f == nil {
 			return
 		}
-		// Every frame covers the whole screen from the origin. Aspeed's browser decoder takes a
-		// single table selector for luma and chroma, so it gets the luma table (the visually
-		// dominant one) and pass-2 tables stay at 0, as in the vendor viewer.
-		srv.SendAspeedFrame(cur.Mode420, cur.LumaSelector, 0, 0, 0, cur.Width, cur.Height, frameBuf)
-		frameBuf = frameBuf[:0]
+		srv.SendAspeedFrame(f.Mode420, f.LumaSelector, f.ChromaSelector, f.Width, f.Height, f.Bitstream)
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			flush()
 			return
 		default:
 		}
 
 		readTimeout := dellIdleFrameWait
-		if len(frameBuf) > 0 {
+		if frames.inProgress() {
 			readTimeout = dellChunkGap
 		}
 
 		pkt, err := client.ReadVideoPacketWithTimeout(readTimeout)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// A timeout while accumulating chunks means the frame is complete.
-				flush()
+				// A pause while accumulating chunks means the frame is complete.
+				send(frames.take())
 
 				if time.Since(lastPktTime) > dellStaticRefreshAfter {
 					_ = client.RequestFrameRefresh()
@@ -131,7 +127,7 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 				continue
 			}
 			log.Printf("[Dell] Video stream interrupted (%v). Attempting automatic reconnection...", err)
-			flush()
+			frames.take() // a partial frame would decode as garbage
 			if !reconnectDell(ctx, client) {
 				return
 			}
@@ -142,26 +138,20 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 		if pkt == nil {
 			continue
 		}
-
 		lastPktTime = time.Now()
 
 		if pkt.Flags&1 != 0 {
-			// First chunk of a new frame.
-			flush()
-			frameBuf = append(frameBuf[:0], pkt.Bitstream...)
-			if pkt.Width != cur.Width || pkt.Height != cur.Height {
-				log.Printf("[Dell] Host video mode is %dx%d", pkt.Width, pkt.Height)
-				srv.SetScreenSize(int(pkt.Width), int(pkt.Height))
+			if pkt.Width != width || pkt.Height != height {
+				width, height = pkt.Width, pkt.Height
+				log.Printf("[Dell] Host video mode is %dx%d", width, height)
+				srv.SetScreenSize(int(width), int(height))
 			}
 			if sel := [2]byte{pkt.LumaSelector, pkt.ChromaSelector}; !seenSelectors[sel] {
 				seenSelectors[sel] = true
 				log.Printf("[Dell] Video quantisation tables: luma %d, chroma %d", sel[0], sel[1])
 			}
-			cur = *pkt
-			cur.Bitstream = nil
-		} else {
-			frameBuf = append(frameBuf, pkt.Bitstream...)
 		}
+		send(frames.add(pkt))
 	}
 }
 

@@ -54,22 +54,19 @@ func (c *Client) ReadVideoPacketWithTimeout(timeout time.Duration) (*VideoPacket
 		return nil, nil
 	}
 
-	c.ackVideoPacket()
+	if err := c.ackVideoPacket(); err != nil {
+		// Without ACKs the BMC stops streaming; surface it so the caller reconnects. Not wrapped,
+		// so a write timeout is not mistaken for an idle read timeout.
+		return nil, fmt.Errorf("video ACK failed: %v", err)
+	}
 	return parseVideoFrame(pkt.Payload), nil
 }
 
 // ackVideoPacket acknowledges one ib packet. Payload byte 0 is a batch count, always 1; a rolling
 // counter stalls the AST2300 when it wraps to 0 on the 256th packet.
-func (c *Client) ackVideoPacket() {
+func (c *Client) ackVideoPacket() error {
 	atomic.AddUint32(&c.AckCount, 1)
-	ackPkt := beefPacket(pktVideoAck, [8]byte{1})
-
-	c.ConnMu.Lock()
-	defer c.ConnMu.Unlock()
-	if c.VideoConn != nil {
-		_ = c.VideoConn.SetWriteDeadline(time.Now().Add(socketWriteTimeout))
-		_, _ = c.VideoConn.Write(ackPkt)
-	}
+	return c.writeVideo(beefPacket(pktVideoAck, [8]byte{1}))
 }
 
 // parseVideoFrame decodes an ib payload, returning nil for cursor bitmaps and short payloads.

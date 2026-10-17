@@ -3,6 +3,7 @@ package dell
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"net"
 	"reflect"
 	"testing"
@@ -153,5 +154,27 @@ func TestParseVideoFrame(t *testing.T) {
 				t.Errorf("got  %+v\nwant %+v", *got, *tt.want)
 			}
 		})
+	}
+}
+
+// failingWriteConn delivers reads from the embedded conn but rejects every write.
+type failingWriteConn struct{ net.Conn }
+
+func (failingWriteConn) Write([]byte) (int, error) { return 0, errors.New("write: broken pipe") }
+
+func TestReadVideoPacketReportsFailedAck(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	c := &Client{VideoConn: failingWriteConn{client}}
+
+	go func() { _, _ = server.Write(longPacket(pktVideoFrame, frame(5, 0, 0, 400, 720, 1, 0x77, 0xAA))) }()
+
+	_, err := c.ReadVideoPacketWithTimeout(time.Second)
+	if err == nil {
+		t.Fatal("want error when the ACK cannot be sent; the BMC stops streaming without it")
+	}
+	if isTimeout(err) {
+		t.Errorf("ACK failure must not look like an idle timeout: %v", err)
 	}
 }

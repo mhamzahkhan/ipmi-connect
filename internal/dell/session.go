@@ -2,6 +2,7 @@ package dell
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -162,7 +163,8 @@ type JNLPResponse struct {
 // FetchKVMParameters downloads viewer.jnlp to acquire one-time session credentials.
 func (c *Client) FetchKVMParameters() error {
 	ts := time.Now().UnixMilli()
-	urlStr := fmt.Sprintf("https://%s/viewer.jnlp(%s@0@%d)?ST1=%s", c.Host, c.Host, ts, c.ST1Token)
+	st1, _ := c.csrfTokens()
+	urlStr := fmt.Sprintf("https://%s/viewer.jnlp(%s@0@%d)?ST1=%s", c.Host, c.Host, ts, st1)
 
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
@@ -180,9 +182,14 @@ func (c *Client) FetchKVMParameters() error {
 		return bmc.FormatError("Dell FetchKVMParameters read", err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("viewer.jnlp: HTTP %d", resp.StatusCode)
+	}
+
+	// An expired web session makes the BMC serve its HTML login page here instead of a JNLP.
 	var jnlp JNLPResponse
 	if err := xml.Unmarshal(bodyBytes, &jnlp); err != nil {
-		return bmc.FormatError("Dell JNLP Unmarshal", err)
+		return fmt.Errorf("%w: viewer.jnlp is not a JNLP document", errSessionExpired)
 	}
 
 	user, passwd := "", ""
@@ -208,7 +215,7 @@ func (c *Client) FetchKVMParameters() error {
 		}
 	}
 	if user == "" || passwd == "" {
-		return fmt.Errorf("viewer.jnlp carried no KVM tokens (web session expired?)")
+		return fmt.Errorf("%w: viewer.jnlp carried no KVM tokens", errSessionExpired)
 	}
 
 	c.UserTokenStr, c.PassTokenStr = user, passwd
@@ -217,17 +224,26 @@ func (c *Client) FetchKVMParameters() error {
 	return nil
 }
 
-// refreshKVMTokens fetches fresh one-time KVM tokens, logging in to the web UI again first if
-// the old web session has expired (the BMC then serves its login page instead of viewer.jnlp).
-func (c *Client) refreshKVMTokens() error {
-	err := c.FetchKVMParameters()
-	if err == nil {
-		return nil
-	}
-	log.Printf("[Dell] Could not fetch KVM tokens (%v); logging in to the web UI again", err)
+// csrfTokens returns the ST1/ST2 tokens under SessionMu, which Login holds while replacing them.
+// Callers must not already hold SessionMu.
+func (c *Client) csrfTokens() (st1, st2 string) {
 	c.SessionMu.Lock()
-	c.IsLoggedIn = false
-	c.SessionMu.Unlock()
+	defer c.SessionMu.Unlock()
+	return c.ST1Token, c.ST2Token
+}
+
+// errSessionExpired means the BMC answered, but not with KVM tokens: its web session is gone.
+var errSessionExpired = errors.New("BMC web session expired")
+
+// RefreshKVMTokens fetches fresh one-time KVM tokens. Only when the BMC shows its web session
+// has expired does it log in again: after a network error the old session is probably still
+// alive, and the BMC rejects a second GUI session.
+func (c *Client) RefreshKVMTokens() error {
+	err := c.FetchKVMParameters()
+	if err == nil || !errors.Is(err, errSessionExpired) {
+		return err
+	}
+	log.Printf("[Dell] %v; logging in to the web UI again", err)
 	if err := c.Login(); err != nil {
 		return fmt.Errorf("re-login: %w", err)
 	}
@@ -255,7 +271,7 @@ func (c *Client) KeepAlive() error {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return err
+		return bmc.FormatError("Dell KeepAlive", err)
 	}
 	defer resp.Body.Close()
 	return nil

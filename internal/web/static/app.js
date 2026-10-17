@@ -206,46 +206,32 @@ import { KEY_TO_HID } from '/keymap.js';
       const imgData = new ImageData(rawPixels, w, h);
       ctx.putImageData(imgData, 0, 0);
     } else if (magic === 0x03) {
-      // Aspeed Compressed Frame / Tile
-      // Bytes 1: mode420, 2: selector, 3: advance_selector
-      // Bytes 4..5: X, 6..7: Y, 8..9: Width, 10..11: Height, 12..: Bitstream
-      const mode420 = view.getUint8(1);
-      const selector = view.getUint8(2);
-      const advanceSelector = view.getUint8(3);
-      const x = view.getUint16(4);
-      const y = view.getUint16(6);
+      // ASPEED frame: 1 mode420, 2 luma table, 3 chroma table, 4..7 reserved,
+      // 8..9 width, 10..11 height, 12.. bitstream. Every frame covers the screen from (0,0).
       const w = view.getUint16(8);
       const h = view.getUint16(10);
-      const bitstream = new Uint8Array(buf, 12);
-
       const header = {
         width: w,
         height: h,
-        mode420: mode420,
-        selector: selector,
-        advance_selector: advanceSelector
+        mode420: view.getUint8(1),
+        selector: view.getUint8(2),
+        chroma_selector: view.getUint8(3),
+        advance_selector: 0
       };
 
       try {
-        const pixels = decode(header, bitstream);
-        const isFullFrame = (x === 0 && y === 0 && w >= 320 && h >= 200);
-        if (isFullFrame) {
-          if (canvas.width !== w || canvas.height !== h) {
-            canvas.width = w;
-            canvas.height = h;
-            statRes.textContent = `Resolution: ${w} x ${h}`;
-          }
-          lastCachedFrame = buf.slice(0);
-          calibrateContrast(pixels);
+        // decode() returns the decoder's own frame buffer, which is also the reference for the
+        // next delta frame: work on a copy so contrast correction never feeds back into it.
+        const pixels = new Uint8ClampedArray(decode(header, new Uint8Array(buf, 12)));
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+          statRes.textContent = `Resolution: ${w} x ${h}`;
         }
-
+        lastCachedFrame = buf.slice(0);
+        calibrateContrast(pixels);
         applyContrast(pixels);
-
-        const slice = (pixels instanceof Uint8ClampedArray)
-          ? pixels
-          : new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, w * h * 4);
-        const imgData = new ImageData(slice, w, h);
-        ctx.putImageData(imgData, x, y);
+        ctx.putImageData(new ImageData(pixels, w, h), 0, 0);
       } catch (err) {
         console.warn('Aspeed decode error:', err);
       }

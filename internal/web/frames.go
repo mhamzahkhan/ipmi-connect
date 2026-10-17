@@ -48,14 +48,13 @@ func (s *Server) SendRawRGBA(width, height int, rgba []byte) {
 }
 
 // SendAspeedFrame packages an Aspeed video bitstream chunk and broadcasts to browsers.
-func (s *Server) SendAspeedFrame(mode420, selector, advanceSelector byte, x, y, w, h uint16, bitstream []byte) {
+func (s *Server) SendAspeedFrame(mode420, lumaSelector, chromaSelector byte, w, h uint16, bitstream []byte) {
 	buf := make([]byte, 12+len(bitstream))
 	buf[0] = 0x03 // Aspeed Frame marker
 	buf[1] = mode420
-	buf[2] = selector
-	buf[3] = advanceSelector
-	binary.BigEndian.PutUint16(buf[4:6], x)
-	binary.BigEndian.PutUint16(buf[6:8], y)
+	buf[2] = lumaSelector
+	buf[3] = chromaSelector
+	// Bytes 4..7 are reserved (zero): frames always cover the screen from the origin.
 	binary.BigEndian.PutUint16(buf[8:10], w)
 	binary.BigEndian.PutUint16(buf[10:12], h)
 	copy(buf[12:], bitstream)

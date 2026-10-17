@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"ipmi-connect/internal/bmc"
@@ -166,27 +167,20 @@ func (c *Client) ConnectVideo() error {
 
 // EnableVideo sends the fb(true), y(1024, 768), and p() command packets on the Control Channel.
 func (c *Client) EnableVideo() error {
-	c.ConnMu.Lock()
-	conn := c.CtrlConn
-	c.ConnMu.Unlock()
-
-	if conn == nil {
-		return fmt.Errorf("control channel is not connected")
+	// fb(true); y(1024, 768) with width and height as big-endian uint16s; then p() for 1:1
+	// scaling, the sequence the vendor viewer sends at start-up.
+	steps := []struct {
+		name string
+		pkt  []byte
+	}{
+		{"fb", beefPacket(pktEnableVideo, [8]byte{1, 1})},
+		{"y", beefPacket(pktSetResolution, [8]byte{0x04, 0x00, 0x03, 0x00})},
+		{"p", beefPacket(pktSetScale1to1, [8]byte{})},
 	}
-
-	// 1. fb(true)
-	if _, err := conn.Write(beefPacket(pktEnableVideo, [8]byte{1, 1})); err != nil {
-		return bmc.FormatError("Dell EnableVideo fb", err)
-	}
-
-	// 2. y(1024, 768): width and height as big-endian uint16s
-	if _, err := conn.Write(beefPacket(pktSetResolution, [8]byte{0x04, 0x00, 0x03, 0x00})); err != nil {
-		return bmc.FormatError("Dell EnableVideo y", err)
-	}
-
-	// 3. p(): 1:1 scaling, as the vendor viewer sends at start-up
-	if _, err := conn.Write(beefPacket(pktSetScale1to1, [8]byte{})); err != nil {
-		return bmc.FormatError("Dell EnableVideo p", err)
+	for _, step := range steps {
+		if err := c.writeControl(step.pkt); err != nil {
+			return bmc.FormatError("Dell EnableVideo "+step.name, err)
+		}
 	}
 
 	// Start periodic Control Channel heartbeat (Packet 1024 / q) to prevent 30s BMC inactivity timeout
@@ -202,16 +196,29 @@ func (c *Client) RequestFrameRefresh() error {
 	return c.writeControl(beefPacket(pktScreenRefresh, [8]byte{}))
 }
 
-// writeControl sends one packet on the Control Channel, serialised with all other writers.
+// writeControl sends one packet on the Control Channel.
 func (c *Client) writeControl(pkt []byte) error {
-	c.ConnMu.Lock()
-	defer c.ConnMu.Unlock()
+	return c.write(&c.ctrlWriteMu, func() net.Conn { return c.CtrlConn }, "control", pkt)
+}
 
-	conn := c.CtrlConn
+// writeVideo sends one packet on the Video Channel.
+func (c *Client) writeVideo(pkt []byte) error {
+	return c.write(&c.videoWriteMu, func() net.Conn { return c.VideoConn }, "video", pkt)
+}
+
+// write snapshots the connection under ConnMu but writes outside it, so a stalled socket delays
+// only writers on the same channel (serialised by writeMu), never input on the other channel,
+// heartbeats or the readers that also take ConnMu.
+func (c *Client) write(writeMu *sync.Mutex, pick func() net.Conn, channel string, pkt []byte) error {
+	c.ConnMu.Lock()
+	conn := pick()
+	c.ConnMu.Unlock()
 	if conn == nil {
-		return fmt.Errorf("control channel is not connected")
+		return fmt.Errorf("%s channel is not connected", channel)
 	}
 
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	_ = conn.SetWriteDeadline(time.Now().Add(socketWriteTimeout))
 	_, err := conn.Write(pkt)
 	return err

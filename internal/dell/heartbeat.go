@@ -32,13 +32,13 @@ func (c *Client) StartHeartbeat() {
 			case <-stopCh:
 				return
 			case <-ticker.C:
-				c.ConnMu.Lock()
-				curConn := c.CtrlConn
-				if curConn != nil {
-					_ = curConn.SetWriteDeadline(time.Now().Add(socketWriteTimeout))
-					_, _ = curConn.Write(heartbeatPkt)
+				if err := c.writeControl(heartbeatPkt); err != nil {
+					// The BMC drops the session within 30s without heartbeats; tear it down now
+					// so the video loop's read fails and the reconnect path takes over.
+					log.Printf("[Dell] Heartbeat failed (%v); closing session for reconnect", err)
+					c.Close()
+					return
 				}
-				c.ConnMu.Unlock()
 			}
 		}
 	}()
@@ -70,7 +70,10 @@ func (c *Client) drainControl(stopCh <-chan struct{}) {
 			if isTimeout(err) {
 				continue
 			}
-			log.Printf("[Dell] Control channel closed: %v", err)
+			// Unread notifications would back up on the BMC. Close both channels so the video
+			// loop's read fails and the reconnect path takes over.
+			log.Printf("[Dell] Control channel failed (%v); closing session for reconnect", err)
+			c.Close()
 			return
 		}
 		if !seen[pkt.ID] {

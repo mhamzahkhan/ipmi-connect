@@ -41,3 +41,26 @@ func TestHeartbeatLifecycle(t *testing.T) {
 		t.Error("expected heartbeatStop to be nil after Close()")
 	}
 }
+
+func TestDrainControlClosesSessionOnProtocolError(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	video, videoPeer := net.Pipe()
+	defer videoPeer.Close()
+	c := &Client{CtrlConn: client, VideoConn: video}
+
+	go func() { _, _ = server.Write([]byte("JUNKJUNK")) }()
+	done := make(chan struct{})
+	go func() { c.drainControl(make(chan struct{})); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("drainControl did not return after a protocol error")
+	}
+	c.ConnMu.Lock()
+	defer c.ConnMu.Unlock()
+	if c.CtrlConn != nil || c.VideoConn != nil {
+		t.Error("channels left open; the video loop would never notice and reconnect")
+	}
+}

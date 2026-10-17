@@ -173,7 +173,7 @@ Without this ACK, the AST2300 hardware video engine halts streaming after 1-2 fr
 
 ### 5.3 Frame Assembly & Decoder
 1. Chunks with `isFirstChunk = true` indicate the beginning of a frame. Continuation chunks (`isFirstChunk = false`) are appended.
-2. Complete frames are passed directly to the compiled ASPEED WebAssembly decoder (`decoder_wasm.wasm` and `decoder_js.js`), which decompresses the AST2300 VQ/DCT stream directly to RGBA32 pixels for immediate HTML5 `<canvas>` rendering.
+2. Complete frames go to Aspeed's JS decoder (`decoder_js.js`, patched to take separate luma and chroma table selectors), which decompresses the AST2300 VQ/DCT stream to RGBA32 pixels for the HTML5 `<canvas>`. Each frame updates the whole screen from the origin; byte 11's high nibble selects the luma table and its low nibble the chroma table.
 
 ---
 

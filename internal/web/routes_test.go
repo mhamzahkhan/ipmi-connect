@@ -28,7 +28,6 @@ func TestRoutesServeEmbeddedUI(t *testing.T) {
 		{"/contrast.js", "application/javascript", "export function buildContrastLUT"},
 		{"/keymap.js", "application/javascript", "export const KEY_TO_HID"},
 		{"/aspeed/decoder.js", "application/javascript", "export function decode"},
-		{"/aspeed/decoder_wasm.wasm", "application/wasm", "\x00asm"},
 	}
 
 	for _, tt := range tests {

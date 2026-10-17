@@ -3,6 +3,6 @@
 // carries keyboard and mouse input back.
 //
 // Binary frames sent to the browser start with a type byte: 0x02 raw RGBA
-// (u16 width, u16 height, pixels) or 0x03 ASPEED tile (mode420, selector,
-// advance selector, u16 x, y, width, height, bitstream).
+// (u16 width, u16 height, pixels) or 0x03 ASPEED frame (mode420, luma table,
+// chroma table, 4 reserved bytes, u16 width, height, bitstream).
 package web

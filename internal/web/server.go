@@ -20,7 +20,6 @@ import (
 )
 
 func init() {
-	_ = mime.AddExtensionType(".wasm", "application/wasm")
 	_ = mime.AddExtensionType(".js", "application/javascript")
 }
 

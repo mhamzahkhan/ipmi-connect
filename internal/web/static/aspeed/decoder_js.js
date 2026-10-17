@@ -123,15 +123,20 @@ export default class AspeedJpeg {
     }
 
     decode(header, buffer) {
+        // ipmi-connect: Avocent BMCs send separate luma and chroma table selectors, so chroma
+        // has its own selector (falling back to the shared one for other callers).
+        const chroma = (header.chroma_selector !== undefined) ? header.chroma_selector : header.selector;
         if ((this._firstframe == 1) ||
             (this._selector != header.selector ) ||
+            (this._chroma_selector != chroma) ||
             (this._advance_selector != header.advance_selector)) {
             this._selector = header.selector;
+            this._chroma_selector = chroma;
             this._advance_selector = header.advance_selector;
             //console.log("update QT. selector " + header.selector + " adv_selector " + header.advance_selector);
 
             this.loadLuminanceQuantizationTable(this._QT[0], this._selector);
-            this.loadChrominanceQuantizationTable(this._QT[1], this._selector);
+            this.loadChrominanceQuantizationTable(this._QT[1], this._chroma_selector);
             this.loadPass2LuminanceQuantizationTable(this._QT[2], this._advance_selector);
             this.loadPass2ChrominanceQuantizationTable(this._QT[3], this._advance_selector);
             this._firstframe = 0;

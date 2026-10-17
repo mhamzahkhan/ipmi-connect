@@ -31,7 +31,7 @@ func (c *Client) GetPowerState() (string, error) {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "UNKNOWN", err
+		return "UNKNOWN", bmc.FormatError("Dell GetPowerState", err)
 	}
 	defer resp.Body.Close()
 
@@ -56,15 +56,16 @@ func (c *Client) PowerControl(action bmc.PowerAction) error {
 		return err
 	}
 
-	urlStr := fmt.Sprintf("https://%s/data?ST1=%s&set=pwState:%s", c.Host, c.ST1Token, stateStr)
+	st1, st2 := c.csrfTokens()
+	urlStr := fmt.Sprintf("https://%s/data?ST1=%s&set=pwState:%s", c.Host, st1, stateStr)
 	req, err := http.NewRequest("POST", urlStr, strings.NewReader(""))
 	if err != nil {
 		return bmc.FormatError("Dell PowerControl NewRequest", err)
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if c.ST2Token != "" {
-		req.Header.Set("ST2", c.ST2Token)
+	if st2 != "" {
+		req.Header.Set("ST2", st2)
 	}
 
 	resp, err := c.HTTPClient.Do(req)

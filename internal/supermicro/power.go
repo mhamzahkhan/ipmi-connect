@@ -69,7 +69,7 @@ func (c *Client) QueryPowerState() (string, error) {
 	c.applyHeaders(req)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "unknown", err
+		return "unknown", bmc.FormatError("Supermicro QueryPowerState", err)
 	}
 	defer resp.Body.Close()
 

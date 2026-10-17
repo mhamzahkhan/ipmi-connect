@@ -46,3 +46,22 @@ func TestReadPacketRejectsBadMagicAndLength(t *testing.T) {
 		})
 	}
 }
+
+func TestReadPacketTimeoutMidPacketIsNotIdle(t *testing.T) {
+	old := packetBodyTimeout
+	packetBodyTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { packetBodyTimeout = old })
+
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	go func() { _, _ = server.Write([]byte("BEE")) }() // header starts, then stalls
+
+	_, err := readPacket(client, time.Second)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if isTimeout(err) {
+		t.Errorf("a stall inside a packet must not look like an idle timeout: %v", err)
+	}
+}

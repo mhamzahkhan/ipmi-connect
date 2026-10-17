@@ -21,15 +21,18 @@ const (
 	httpTimeout        = 10 * time.Second
 	dialTimeout        = 5 * time.Second
 	socketWriteTimeout = 5 * time.Second
-	packetBodyTimeout  = 3 * time.Second
 	heartbeatInterval  = 5 * time.Second
 	controlDrainPoll   = 2 * time.Second
 	reconnectSettle    = 1 * time.Second
 )
 
-// apcpHandshakeTimeout bounds the APCP greeting, TLS handshake and channel login. It is a
-// variable so tests can shorten it.
-var apcpHandshakeTimeout = 10 * time.Second
+// Variables rather than constants so tests can shorten them.
+var (
+	// apcpHandshakeTimeout bounds the APCP greeting, TLS handshake and channel login.
+	apcpHandshakeTimeout = 10 * time.Second
+	// packetBodyTimeout bounds the rest of a packet once its first byte has arrived.
+	packetBodyTimeout = 3 * time.Second
+)
 
 // Client manages authentication, KVM sessions, and power controls for Dell C6220 II BMCs.
 type Client struct {
@@ -55,7 +58,9 @@ type Client struct {
 	ApplianceSessionToken uint32
 	AckCount              uint32
 	heartbeatStop         chan struct{}
-	ConnMu                sync.Mutex
+	ConnMu                sync.Mutex // guards CtrlConn, VideoConn and heartbeatStop
+	ctrlWriteMu           sync.Mutex // serialises writes on CtrlConn
+	videoWriteMu          sync.Mutex // serialises writes on VideoConn
 }
 
 // NewClient creates a new Dell BMC client.
@@ -98,7 +103,7 @@ func (c *Client) Reconnect() error {
 	time.Sleep(reconnectSettle)
 
 	// One-time KVM tokens are single use; get fresh ones, logging in again if the web session expired.
-	if err := c.refreshKVMTokens(); err != nil {
+	if err := c.RefreshKVMTokens(); err != nil {
 		return fmt.Errorf("reconnect: %w", err)
 	}
 
