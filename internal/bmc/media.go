@@ -58,7 +58,7 @@ type VirtualMedia interface {
 	MapImage(id string, target MediaTarget) error
 	// UnmapDrive ejects a drive, or cancels an attach still in progress.
 	UnmapDrive(target MediaTarget) error
-	// USBReset re-enumerates the BMC's USB devices on the host.
+	// USBReset reconnects the BMC's virtual mass-storage device on the host.
 	USBReset() error
 	MediaStatus() MediaStatus
 }

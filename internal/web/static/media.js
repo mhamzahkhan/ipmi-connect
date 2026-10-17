@@ -272,7 +272,7 @@ export function setupMedia(apiFetch) {
   });
   document.getElementById('btnUsbReset').addEventListener('click', () => {
     act('POST', '/api/media/usb-reset', undefined, 'Resetting USB…',
-      'USB reset sent: virtual media, keyboard and mouse reconnect on the host.');
+      'USB reset sent: the host sees the virtual media device reconnect; images stay mapped.');
   });
 
   poll();

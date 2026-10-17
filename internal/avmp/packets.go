@@ -139,6 +139,7 @@ func mapDisk(disk uint16, blockSize, blocks uint32, readOnly bool, cyl uint16, h
 	return b
 }
 
-// usbReset re-enumerates the BMC's USB devices (virtual media, keyboard and mouse). The BMC
-// sends no reply.
+// usbReset makes the BMC disconnect and reconnect its virtual mass-storage device on the host
+// (about a second on a C6220; keyboard and mouse are not affected, mapped drives stay mapped).
+// The BMC sends no reply.
 func usbReset() []byte { return diskPacket(typeUSBReset, allDrives) }

@@ -305,7 +305,7 @@ func (m *Manager) closeIfIdle() {
 	_ = sess.Close()
 }
 
-// USBReset re-enumerates the BMC's USB devices on the host.
+// USBReset reconnects the BMC's virtual mass-storage device on the host.
 func (m *Manager) USBReset() error {
 	m.mu.Lock()
 	sess := m.session

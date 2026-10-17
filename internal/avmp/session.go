@@ -242,8 +242,8 @@ func (s *Session) heartbeats(ctx context.Context) {
 	}
 }
 
-// USBReset re-enumerates the BMC's USB devices on the host. Mapped drives, keyboard and mouse
-// all disconnect briefly. The BMC does not reply.
+// USBReset reconnects the BMC's virtual mass-storage device on the host; mapped drives stay
+// mapped. The BMC does not reply.
 func (s *Session) USBReset() error { return s.write(usbReset()) }
 
 func (s *Session) write(b []byte) error { return s.writeWithin(b, writeTimeout) }
