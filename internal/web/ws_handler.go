@@ -15,6 +15,9 @@ const maxClientMessage = 4096
 // handleWS streams video to one browser and forwards its input to the console. Accept rejects
 // cross-origin connections: only pages served by this server can open the socket.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	s.connWG.Add(1)
+	defer s.connWG.Done() // registered first, so it runs after the input release below
+
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		log.Printf("[WS] Rejected connection: %v", err)
@@ -23,8 +26,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = conn.CloseNow() }()
 	conn.SetReadLimit(maxClientMessage)
 
-	// Not r.Context(): the request is hijacked, so its context does not track the socket.
-	ctx, cancel := context.WithCancel(context.Background())
+	// Not r.Context(): the request is hijacked, so its context does not track the socket. Run
+	// cancels connCtx on shutdown.
+	ctx, cancel := context.WithCancel(s.connCtx)
 	defer cancel()
 
 	client := newWSClient()

@@ -42,7 +42,55 @@ import { KEY_TO_HID } from '/keymap.js';
   let lastCachedFrame = null;
 
   // Initialize
-  function init() {
+  // Session: the launch link carries a one-time code in its fragment (#c=...), exchanged once for
+  // the per-run token. localStorage is per origin, and the origin includes the port, so other
+  // localhost services cannot read it (unlike cookies, which browsers share across ports).
+  const TOKEN_KEY = 'ipmi-connect-token';
+  let sessionToken = null;
+  let signedOut = false;
+
+  async function ensureSession() {
+    const match = window.location.hash.match(/[#&]c=([0-9a-f]+)/);
+    if (match) {
+      history.replaceState(null, '', window.location.pathname); // drop the code from the address bar
+      const resp = await fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: match[1] })
+      });
+      if (resp.ok) {
+        sessionToken = (await resp.json()).token;
+        try { localStorage.setItem(TOKEN_KEY, sessionToken); } catch (e) { /* private mode: token lives for this tab */ }
+        return true;
+      }
+    }
+    try { sessionToken = localStorage.getItem(TOKEN_KEY); } catch (e) { sessionToken = null; }
+    return !!sessionToken;
+  }
+
+  function showSignedOut() {
+    signedOut = true;
+    statusDot.className = 'status-dot';
+    connectingOverlay.classList.remove('hidden');
+    overlayStatus.textContent = 'Not signed in';
+    overlaySubtext.textContent = 'Open the console link printed in the terminal (each link works once).';
+  }
+
+  async function apiFetch(path, options = {}) {
+    const headers = Object.assign({}, options.headers, { Authorization: `Bearer ${sessionToken}` });
+    const resp = await fetch(path, Object.assign({}, options, { headers }));
+    if (resp.status === 401) {
+      try { localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
+      showSignedOut();
+    }
+    return resp;
+  }
+
+  async function init() {
+    if (!(await ensureSession())) {
+      showSignedOut();
+      return;
+    }
     setupWebSocket();
     setupMouseAndKeyboard();
     setupPowerButtons();
@@ -56,7 +104,8 @@ import { KEY_TO_HID } from '/keymap.js';
   // Poll status API
   async function pollStatus() {
     try {
-      const resp = await fetch('/api/status');
+      if (signedOut) return;
+      const resp = await apiFetch('/api/status');
       if (!resp.ok) return;
       const data = await resp.json();
 
@@ -73,7 +122,7 @@ import { KEY_TO_HID } from '/keymap.js';
   // WebSocket Setup
   function setupWebSocket() {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${proto}//${window.location.host}/ws`;
+    const wsUrl = `${proto}//${window.location.host}/ws?t=${encodeURIComponent(sessionToken)}`;
 
     ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
@@ -89,12 +138,13 @@ import { KEY_TO_HID } from '/keymap.js';
     };
 
     ws.onclose = () => {
+      if (signedOut) return;
       isConnected = false;
       statusDot.className = 'status-dot';
       connectingOverlay.classList.remove('hidden');
       overlayStatus.textContent = 'Connection Closed';
       overlaySubtext.textContent = 'Attempting to reconnect in 3s...';
-      setTimeout(setupWebSocket, 3000);
+      if (!signedOut) setTimeout(setupWebSocket, 3000);
     };
 
     ws.onerror = (err) => {
@@ -337,7 +387,7 @@ import { KEY_TO_HID } from '/keymap.js';
       if (!currentPowerAction) return;
       powerModal.classList.remove('open');
       try {
-        const resp = await fetch('/api/power', {
+        const resp = await apiFetch('/api/power', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: currentPowerAction })

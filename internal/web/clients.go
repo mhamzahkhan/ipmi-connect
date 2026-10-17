@@ -78,13 +78,7 @@ func (s *Server) removeClient(c *wsClient) {
 // behind: video frames are deltas, so its backlog is discarded and the BMC is asked for a full
 // frame instead of letting it paint updates on top of a gap.
 func (s *Server) broadcast(frame []byte) {
-	s.clientsMu.Lock()
-	clients := make([]*wsClient, 0, len(s.clients))
-	for c := range s.clients {
-		clients = append(clients, c)
-	}
-	s.clientsMu.Unlock()
-
+	clients := s.clientList()
 	msg := outMessage{typ: websocket.MessageBinary, data: frame}
 	behind := false
 	for _, c := range clients {
@@ -100,19 +94,59 @@ func (s *Server) broadcast(frame []byte) {
 	}
 }
 
-// requestResync asks the console for a full frame, at most once per resyncInterval.
+// broadcastFull queues a self-contained frame (raw RGBA). Each one supersedes the last, so a
+// browser keeps only the newest instead of a backlog of multi-megabyte frames.
+func (s *Server) broadcastFull(frame []byte) {
+	msg := outMessage{typ: websocket.MessageBinary, data: frame}
+	for _, c := range s.clientList() {
+		c.drain()
+		select {
+		case c.out <- msg:
+		default: // the writer refilled the queue meanwhile; it already has a newer state
+		}
+	}
+}
+
+func (s *Server) clientList() []*wsClient {
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
+	clients := make([]*wsClient, 0, len(s.clients))
+	for c := range s.clients {
+		clients = append(clients, c)
+	}
+	return clients
+}
+
+// requestResync asks the console for a full frame. Requests closer together than resyncInterval
+// are postponed and coalesced, never dropped: a browser whose backlog was discarded has no other
+// way back to a complete picture.
 func (s *Server) requestResync() {
 	s.clientsMu.Lock()
-	if time.Since(s.lastResync) < resyncInterval || s.Console == nil {
+	if s.Console == nil || s.resyncPending {
 		s.clientsMu.Unlock()
 		return
 	}
-	s.lastResync = time.Now()
+	wait := resyncInterval - time.Since(s.lastResync)
+	if wait <= 0 {
+		s.lastResync = time.Now()
+		s.clientsMu.Unlock()
+		go s.refreshForResync()
+		return
+	}
+	s.resyncPending = true
 	s.clientsMu.Unlock()
 
-	go func() {
-		if err := s.Console.RequestFrameRefresh(); err != nil {
-			log.Printf("[WS] Resync refresh: %v", err)
-		}
-	}()
+	time.AfterFunc(wait, func() {
+		s.clientsMu.Lock()
+		s.resyncPending = false
+		s.lastResync = time.Now()
+		s.clientsMu.Unlock()
+		s.refreshForResync()
+	})
+}
+
+func (s *Server) refreshForResync() {
+	if err := s.Console.RequestFrameRefresh(); err != nil {
+		log.Printf("[WS] Resync refresh: %v", err)
+	}
 }

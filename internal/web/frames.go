@@ -14,7 +14,7 @@ func (s *Server) SendRawRGBA(width, height int, rgba []byte) {
 	s.LastFrame = buf
 	s.LastFrameMu.Unlock()
 
-	s.broadcast(buf)
+	s.broadcastFull(buf)
 }
 
 // SendAspeedFrame packages an Aspeed video bitstream chunk and broadcasts to browsers.

@@ -15,6 +15,7 @@ type inputState struct {
 	held    map[uint16]bool
 	buttons byte
 	x, y    uint16
+	lastErr string // last logged input error, so a persistent failure logs once, not per event
 }
 
 func newInputState(console bmc.Console) *inputState {
@@ -63,15 +64,24 @@ func (in *inputState) key(down bool, usage uint16) {
 	} else {
 		delete(in.held, usage)
 	}
-	if err := in.console.SendKeyEvent(down, usage); err != nil {
-		log.Printf("[Input] Key %d: %v", usage, err)
-	}
+	in.report(in.console.SendKeyEvent(down, usage))
 }
 
 func (in *inputState) pointer(buttons byte, x, y uint16) {
 	in.buttons, in.x, in.y = buttons, x, y
-	if err := in.console.SendPointerEvent(buttons, x, y); err != nil {
-		log.Printf("[Input] Pointer: %v", err)
+	in.report(in.console.SendPointerEvent(buttons, x, y))
+}
+
+// report logs an input error once until input succeeds again: pointer moves arrive dozens of
+// times a second and would otherwise bury the log.
+func (in *inputState) report(err error) {
+	if err == nil {
+		in.lastErr = ""
+		return
+	}
+	if msg := err.Error(); msg != in.lastErr {
+		in.lastErr = msg
+		log.Printf("[Input] %v", err)
 	}
 }
 

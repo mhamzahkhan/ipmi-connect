@@ -13,7 +13,6 @@ import (
 
 const (
 	smUpdateInterval = 100 * time.Millisecond
-	smWriteTimeout   = 500 * time.Millisecond
 	smReadPoll       = 100 * time.Millisecond
 )
 
@@ -47,7 +46,7 @@ func runSupermicro(ctx context.Context, server *web.Server, host, user, password
 		server.State.ScreenHeight = client.ScreenHeight
 		server.StateMu.Unlock()
 
-		streamSupermicroVideo(ctx, server, conn, client.ScreenWidth, client.ScreenHeight)
+		streamSupermicroVideo(ctx, server, conn, console, client.ScreenWidth, client.ScreenHeight)
 	}()
 	return client.Logout
 }
@@ -56,7 +55,7 @@ func runSupermicro(ctx context.Context, server *web.Server, host, user, password
 //
 // TODO: FramebufferUpdate rectangles are not decoded yet. Every update re-sends a
 // solid placeholder buffer, so the Supermicro console currently shows a blank screen.
-func streamSupermicroVideo(ctx context.Context, srv *web.Server, conn net.Conn, width, height int) {
+func streamSupermicroVideo(ctx context.Context, srv *web.Server, conn net.Conn, console *supermicro.Console, width, height int) {
 	if width <= 0 || height <= 0 {
 		width, height = 1024, 768
 	}
@@ -73,7 +72,7 @@ func streamSupermicroVideo(ctx context.Context, srv *web.Server, conn net.Conn, 
 
 	// FramebufferUpdateRequest: type 3, incremental flag, x, y, width, height.
 	req := []byte{3, 0, 0, 0, 0, 0, byte(width >> 8), byte(width & 0xFF), byte(height >> 8), byte(height & 0xFF)}
-	if _, err := conn.Write(req); err != nil {
+	if err := console.WriteRFB(req); err != nil {
 		return
 	}
 
@@ -87,8 +86,7 @@ func streamSupermicroVideo(ctx context.Context, srv *web.Server, conn net.Conn, 
 			return
 		case <-ticker.C:
 			req[1] = 1 // incremental from now on
-			_ = conn.SetWriteDeadline(time.Now().Add(smWriteTimeout))
-			if _, err := conn.Write(req); err != nil {
+			if err := console.WriteRFB(req); err != nil {
 				return
 			}
 		default:

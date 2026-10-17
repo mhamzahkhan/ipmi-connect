@@ -145,31 +145,12 @@ func (c *Client) HandshakeRFB(conn net.Conn) error {
 	return nil
 }
 
-// SendPointerEvent injects a mouse event over the RFB connection.
-// Type 5 (1B), ButtonMask (1B), X (2B), Y (2B)
-func SendPointerEvent(conn net.Conn, buttonMask byte, x, y uint16) error {
+// pointerEvent encodes an RFB PointerEvent: type 5, button mask, x, y.
+func pointerEvent(buttonMask byte, x, y uint16) []byte {
 	buf := make([]byte, 6)
 	buf[0] = 5
 	buf[1] = buttonMask
 	binary.BigEndian.PutUint16(buf[2:4], x)
 	binary.BigEndian.PutUint16(buf[4:6], y)
-
-	_, err := conn.Write(buf)
-	return err
-}
-
-// SendKeyEvent injects a keyboard event over the RFB connection.
-// Type 4 (1B), DownFlag (1B), Padding (2B), KeySym (4B)
-func SendKeyEvent(conn net.Conn, down bool, keySym uint32) error {
-	buf := make([]byte, 8)
-	buf[0] = 4
-	if down {
-		buf[1] = 1
-	} else {
-		buf[1] = 0
-	}
-	binary.BigEndian.PutUint32(buf[4:8], keySym)
-
-	_, err := conn.Write(buf)
-	return err
+	return buf
 }

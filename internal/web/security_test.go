@@ -9,16 +9,15 @@ import (
 	"ipmi-connect/internal/bmc"
 )
 
-// authed makes r look like it came from the console page: local Host and the session cookie.
+// authed makes r look like it came from the console page: local Host and the session token.
 func authed(s *Server, r *http.Request) *http.Request {
 	r.Host = "127.0.0.1"
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: s.token})
+	r.Header.Set("Authorization", "Bearer "+s.token)
 	return r
 }
 
-func authHeader(s *Server) http.Header {
-	return http.Header{"Cookie": []string{sessionCookie + "=" + s.token}}
-}
+// wsURL appends the session token, which the page passes as a query parameter on the socket.
+func wsURL(s *Server, base string) string { return base + "?t=" + s.token }
 
 func newGuardedServer(t *testing.T) (*Server, http.Handler, *fakeConsole) {
 	t.Helper()
@@ -32,20 +31,41 @@ func newGuardedServer(t *testing.T) (*Server, http.Handler, *fakeConsole) {
 	return srv, h, fc
 }
 
-func TestAuthLinkSetsSessionCookie(t *testing.T) {
+func TestLaunchCodeIsExchangedOnceForTheToken(t *testing.T) {
 	srv, h, _ := newGuardedServer(t)
 
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/auth?t="+srv.token, nil))
-
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
-		t.Fatalf("status %d location %q, want 303 to /", rec.Code, rec.Header().Get("Location"))
+	exchange := func(code string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/session", strings.NewReader(`{"code":"`+code+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec
 	}
-	cookie := rec.Header().Get("Set-Cookie")
-	for _, want := range []string{sessionCookie + "=" + srv.token, "HttpOnly", "SameSite=Strict", "Path=/"} {
-		if !strings.Contains(cookie, want) {
-			t.Errorf("Set-Cookie %q lacks %q", cookie, want)
-		}
+
+	if rec := exchange("wrong"); rec.Code != http.StatusUnauthorized {
+		t.Errorf("wrong code: status %d, want 401", rec.Code)
+	}
+	rec := exchange(srv.launchCode)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), srv.token) {
+		t.Fatalf("first exchange: status %d body %q", rec.Code, rec.Body.String())
+	}
+	if rec := exchange(srv.launchCode); rec.Code != http.StatusUnauthorized {
+		t.Errorf("second exchange: status %d, want 401 (the launch link is visible in the process list)", rec.Code)
+	}
+	if strings.Contains(srv.LaunchURL(), srv.token) {
+		t.Error("launch URL contains the long-lived token")
+	}
+	if !strings.Contains(srv.LaunchURL(), "#c="+srv.launchCode) {
+		t.Errorf("launch URL %q should carry the code in the fragment, which is never sent to a server", srv.LaunchURL())
+	}
+}
+
+func TestStaticAssetsNeedNoSession(t *testing.T) {
+	_, h, _ := newGuardedServer(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/app.js", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("status %d: the page must load before it can exchange its launch code", rec.Code)
 	}
 }
 
@@ -57,15 +77,17 @@ func TestGuardRejects(t *testing.T) {
 		req    func() *http.Request
 		status int
 	}{
-		{"page without session", func() *http.Request {
-			return httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+		{"API without session", func() *http.Request {
+			return httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/status", nil)
 		}, http.StatusUnauthorized},
-		{"auth link with wrong token", func() *http.Request {
-			return httptest.NewRequest(http.MethodGet, "http://127.0.0.1/auth?t=nope", nil)
-		}, http.StatusUnauthorized},
-		{"wrong session cookie", func() *http.Request {
+		{"API with wrong token", func() *http.Request {
 			r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/status", nil)
-			r.AddCookie(&http.Cookie{Name: sessionCookie, Value: "nope"})
+			r.Header.Set("Authorization", "Bearer nope")
+			return r
+		}, http.StatusUnauthorized},
+		{"API with token in a cookie only", func() *http.Request {
+			r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/status", nil)
+			r.AddCookie(&http.Cookie{Name: "ipmi_connect_session", Value: srv.token})
 			return r
 		}, http.StatusUnauthorized},
 		{"DNS rebinding Host", func() *http.Request {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"time"
 
 	"ipmi-connect/internal/bmc"
 )
@@ -16,7 +17,7 @@ var errKeyboardUnsupported = errors.New("supermicro keyboard input is not implem
 // is established; until then input is rejected.
 type Console struct {
 	client *Client
-	mu     sync.Mutex // guards conn and serialises writes on it
+	mu     sync.Mutex // guards conn and serialises every write on it
 	conn   net.Conn
 }
 
@@ -32,14 +33,25 @@ func (c *Console) AttachRFB(conn net.Conn) {
 	c.conn = conn
 }
 
-// SendPointerEvent writes an RFB PointerEvent.
-func (c *Console) SendPointerEvent(buttons byte, x, y uint16) error {
+// rfbWriteTimeout bounds each write so a stalled BMC cannot hold the lock indefinitely.
+const rfbWriteTimeout = 2 * time.Second
+
+// WriteRFB sends raw RFB bytes. All writers (input and the video loop) go through here, so writes
+// never interleave and every one has a deadline.
+func (c *Console) WriteRFB(b []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.conn == nil {
 		return errors.New("supermicro RFB connection not established")
 	}
-	return SendPointerEvent(c.conn, buttons, x, y)
+	_ = c.conn.SetWriteDeadline(time.Now().Add(rfbWriteTimeout))
+	_, err := c.conn.Write(b)
+	return err
+}
+
+// SendPointerEvent writes an RFB PointerEvent.
+func (c *Console) SendPointerEvent(buttons byte, x, y uint16) error {
+	return c.WriteRFB(pointerEvent(buttons, x, y))
 }
 
 // SendKeyEvent is not supported until the ATEN input encoding is implemented.

@@ -47,6 +47,13 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// After the first Ctrl+C, restore default handling so a second one exits immediately, even
+	// while setup is blocked on the network.
+	go func() {
+		<-ctx.Done()
+		log.Printf("[Signal] Caught shutdown signal, cleaning up BMC session (Ctrl+C again to force quit)...")
+		stop()
+	}()
 
 	var logout func()
 	switch targetType {
@@ -61,16 +68,8 @@ func main() {
 	defer logout()
 
 	if ctx.Err() != nil {
-		log.Printf("[Signal] Interrupted during setup, cleaning up BMC session...")
-		return
+		return // interrupted during setup; the deferred logout runs
 	}
-
-	// After the first Ctrl+C, restore default handling so a second one exits immediately.
-	go func() {
-		<-ctx.Done()
-		log.Printf("[Signal] Caught shutdown signal, cleaning up BMC session...")
-		stop()
-	}()
 
 	if err := server.Run(ctx, !opts.NoBrowser); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Printf("Server error: %v", err)

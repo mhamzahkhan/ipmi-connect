@@ -4,17 +4,16 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 )
 
-const (
-	sessionCookie = "ipmi_connect_session"
-	// maxJSONBody bounds API request bodies; every API payload is a few bytes of JSON.
-	maxJSONBody = 4096
-)
+// maxJSONBody bounds API request bodies; every API payload is a few bytes of JSON.
+const maxJSONBody = 4096
 
 // contentSecurityPolicy allows only this origin's own assets and forbids framing (clickjacking
 // the power buttons). Inline style attributes are used by the page.
@@ -28,11 +27,16 @@ func newToken() string {
 	return hex.EncodeToString(b)
 }
 
-// guard protects every route of the local console:
-//   - Host must be a loopback name, defeating DNS rebinding;
-//   - a per-run session (cookie set via /auth?t=<token>, or a Bearer token) is required, so other
-//     sites and other local users cannot drive the console;
-//   - state-changing requests must not come from another origin.
+// guard protects the local console.
+//
+//   - Host must be a loopback name, defeating DNS rebinding.
+//   - The API and WebSocket need the per-run token (Authorization: Bearer, or ?t= on the socket).
+//     The page gets it by exchanging the one-time code from its launch link; it is never a cookie,
+//     because browsers share 127.0.0.1 cookies with every other local port and service.
+//   - State-changing requests must not come from another site.
+//
+// Static assets carry no secrets and are served to anyone on loopback: the page has to load
+// before it can exchange its code.
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -45,45 +49,69 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
-		if r.URL.Path == "/auth" {
-			s.handleAuth(w, r)
-			return
-		}
-		if !s.authorized(r) {
-			http.Error(w, "Not signed in: open the console link printed in the terminal.", http.StatusUnauthorized)
-			return
-		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && isCrossSite(r) {
 			http.Error(w, "cross-site request refused", http.StatusForbidden)
+			return
+		}
+		if r.URL.Path == "/api/session" {
+			s.handleSession(w, r)
+			return
+		}
+		protected := r.URL.Path == "/ws" || strings.HasPrefix(r.URL.Path, "/api/")
+		if protected && !s.authorized(r) {
+			http.Error(w, "not signed in: open the console link printed in the terminal", http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// handleAuth exchanges the token from the terminal link for a session cookie, then redirects so
-// the token leaves the address bar and browser history.
-func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
-	if !s.tokenMatches(r.URL.Query().Get("t")) {
-		http.Error(w, "invalid console link", http.StatusUnauthorized)
+// handleSession exchanges the one-time launch code for the session token. The code works once:
+// the launch URL is visible in the process list of the browser it was handed to.
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
-		Value:    s.token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-	})
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	if !requireJSON(w, r) {
+		return
+	}
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	s.sessionMu.Lock()
+	ok := !s.launchCodeUsed && subtle.ConstantTimeCompare([]byte(req.Code), []byte(s.launchCode)) == 1
+	if ok {
+		s.launchCodeUsed = true
+	}
+	s.sessionMu.Unlock()
+	if !ok {
+		http.Error(w, "launch link already used or invalid: restart ipmi-connect for a new one", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{"token": s.token})
+}
+
+// LaunchURL is the link that signs a browser in. The code sits in the fragment, which browsers
+// never send to a server.
+func (s *Server) LaunchURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d/#c=%s", s.boundPort(), s.launchCode)
 }
 
 func (s *Server) authorized(r *http.Request) bool {
-	if c, err := r.Cookie(sessionCookie); err == nil && s.tokenMatches(c.Value) {
+	if bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && s.tokenMatches(bearer) {
 		return true
 	}
-	bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	return ok && s.tokenMatches(bearer)
+	// Browsers cannot set headers on a WebSocket handshake, so the page passes the token here.
+	return r.URL.Path == "/ws" && s.tokenMatches(r.URL.Query().Get("t"))
 }
 
 func (s *Server) tokenMatches(candidate string) bool {

@@ -27,26 +27,40 @@ var staticFS embed.FS
 
 // Server hosts the local web UI, REST API, and WebSocket streaming bridge.
 type Server struct {
-	State       bmc.SessionState
-	StateMu     sync.RWMutex
-	Console     bmc.Console // set once before Run; nil until the BMC is connected
-	clients     map[*wsClient]struct{}
-	clientsMu   sync.Mutex // guards clients and lastResync
-	lastResync  time.Time
-	Port        int
-	HTTPServer  *http.Server
-	token       string // per-run secret for the session cookie
+	State          bmc.SessionState
+	StateMu        sync.RWMutex
+	Console        bmc.Console // set once before Run; nil until the BMC is connected
+	clients        map[*wsClient]struct{}
+	clientsMu      sync.Mutex // guards clients, lastResync and resyncPending
+	lastResync     time.Time
+	resyncPending  bool
+	Port           int // guarded by sessionMu once Run starts
+	HTTPServer     *http.Server
+	token          string     // per-run secret required by the API and WebSocket
+	launchCode     string     // one-time code in the launch link, exchanged for token
+	sessionMu      sync.Mutex // guards Port and launchCodeUsed
+	launchCodeUsed bool
+
+	// Sockets are hijacked, so HTTPServer.Shutdown does not stop them: Run cancels connCtx and
+	// waits on connWG so each socket releases its held input before main logs out.
+	connCtx     context.Context
+	connCancel  context.CancelFunc
+	connWG      sync.WaitGroup
 	LastFrame   []byte // latest raw RGBA frame, replayed to new browsers
 	LastFrameMu sync.RWMutex
 }
 
 // NewServer initializes a new Web UI server.
 func NewServer(port int, state bmc.SessionState) *Server {
+	connCtx, connCancel := context.WithCancel(context.Background())
 	return &Server{
-		token:   newToken(),
-		State:   state,
-		Port:    port,
-		clients: make(map[*wsClient]struct{}),
+		connCtx:    connCtx,
+		connCancel: connCancel,
+		token:      newToken(),
+		launchCode: newToken(),
+		State:      state,
+		Port:       port,
+		clients:    make(map[*wsClient]struct{}),
 	}
 }
 
@@ -80,7 +94,9 @@ func (s *Server) Run(ctx context.Context, openBrowser bool) error {
 			return err
 		}
 	}
+	s.sessionMu.Lock()
 	s.Port = listener.Addr().(*net.TCPAddr).Port
+	s.sessionMu.Unlock()
 
 	s.HTTPServer = &http.Server{
 		Handler:           mux,
@@ -89,8 +105,8 @@ func (s *Server) Run(ctx context.Context, openBrowser bool) error {
 		WriteTimeout:      15 * time.Second,
 	}
 
-	// The token in this link becomes an HttpOnly session cookie; anyone without it is refused.
-	url := fmt.Sprintf("http://127.0.0.1:%d/auth?t=%s", s.Port, s.token)
+	// The link's one-time code signs in the first browser that opens it.
+	url := s.LaunchURL()
 	log.Printf("==================================================================")
 	log.Printf("🚀 IPMI Modern Console active at: %s", url)
 	log.Printf("==================================================================")
@@ -112,10 +128,28 @@ func (s *Server) Run(ctx context.Context, openBrowser bool) error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	if err := s.HTTPServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err = s.HTTPServer.Shutdown(shutdownCtx)
+
+	s.connCancel()
+	sockets := make(chan struct{})
+	go func() { s.connWG.Wait(); close(sockets) }()
+	select {
+	case <-sockets:
+	case <-shutdownCtx.Done():
+		log.Printf("[Server] Timed out waiting for browser connections to close")
+	}
+
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+// boundPort returns the listening port once Run has bound it (0 before).
+func (s *Server) boundPort() int {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	return s.Port
 }
 
 // shutdownTimeout bounds how long Run waits for in-flight HTTP requests on exit.
