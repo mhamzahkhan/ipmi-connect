@@ -15,15 +15,21 @@ import (
 const defaultKVMPort = 7578
 
 // Timeouts and intervals. The 5s heartbeat keeps well inside the BMC's 30s control-channel watchdog.
+//
+// socketWriteTimeout is generous on purpose: a timed-out write leaves a TLS connection unusable.
 const (
 	httpTimeout        = 10 * time.Second
 	dialTimeout        = 5 * time.Second
-	socketWriteTimeout = 500 * time.Millisecond
+	socketWriteTimeout = 5 * time.Second
 	packetBodyTimeout  = 3 * time.Second
 	heartbeatInterval  = 5 * time.Second
 	controlDrainPoll   = 2 * time.Second
 	reconnectSettle    = 1 * time.Second
 )
+
+// apcpHandshakeTimeout bounds the APCP greeting, TLS handshake and channel login. It is a
+// variable so tests can shorten it.
+var apcpHandshakeTimeout = 10 * time.Second
 
 // Client manages authentication, KVM sessions, and power controls for Dell C6220 II BMCs.
 type Client struct {
@@ -91,9 +97,9 @@ func (c *Client) Reconnect() error {
 	// Wait briefly to allow BMC socket cleanup
 	time.Sleep(reconnectSettle)
 
-	// Refresh JNLP parameters if needed
-	if err := c.FetchKVMParameters(); err != nil {
-		log.Printf("[Dell] Reconnect FetchKVMParameters warning: %v", err)
+	// One-time KVM tokens are single use; get fresh ones, logging in again if the web session expired.
+	if err := c.refreshKVMTokens(); err != nil {
+		return fmt.Errorf("reconnect: %w", err)
 	}
 
 	if err := c.ConnectControl(); err != nil {

@@ -24,6 +24,25 @@ const (
 	channelModeVideo   byte = 4 // ASPEED bitstream and ACKs
 )
 
+// serverPacketNames are the class names decrypted from the C6220's viewer, for logging.
+var serverPacketNames = map[uint16]string{
+	0x8102: "MouseAccelResponse",
+	0x8200: "Input Resolution Response",
+	0x8202: "VideoSetupData",
+	0x8204: "DVCColorModeResponse",
+	0x8300: "User Login Response",
+	0x8401: "SharingRequest",
+	0x8431: "SelectedServerUpdate",
+	0x8434: "RequestCredentialsMessage",
+}
+
+func packetName(id uint16) string {
+	if name, ok := serverPacketNames[id]; ok {
+		return name
+	}
+	return "unknown packet"
+}
+
 const (
 	beefHeaderLen   = 8
 	shortPacketLen  = 16

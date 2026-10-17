@@ -17,12 +17,16 @@ import (
 
 // connectAPCP performs the 53-byte APCP handshake on the given port and channel mode,
 // upgrading to TLS 1.0.
+//
+// The returned connection still carries the handshake deadline, so the caller's authentication
+// exchange is bounded too; callers clear it once authenticated.
 func (c *Client) connectAPCP(port int, mode byte) (net.Conn, error) {
 	addr := net.JoinHostPort(c.Host, strconv.Itoa(port))
 	rawConn, err := net.DialTimeout("tcp", addr, dialTimeout)
 	if err != nil {
 		return nil, bmc.FormatError("Dell connectAPCP dial", err)
 	}
+	_ = rawConn.SetDeadline(time.Now().Add(apcpHandshakeTimeout))
 
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
@@ -107,35 +111,25 @@ func (c *Client) ConnectControl() error {
 		return bmc.FormatError("Dell ConnectControl send cb packet", err)
 	}
 
-	// Read yb response (Magic BEEF, ID 0x8300 or 0x8305, length 115)
-	header := make([]byte, 8)
-	if _, err := io.ReadFull(conn, header); err != nil {
+	// yb, "User Login Response": 0x83xx. The BMC may send notifications first.
+	yb, err := awaitPacket(conn, func(id uint16) bool { return id>>8 == 0x83 })
+	if err != nil {
 		conn.Close()
-		return bmc.FormatError("Dell ConnectControl read yb header", err)
+		return bmc.FormatError("Dell ConnectControl read login response", err)
+	}
+	if len(yb.Payload) < 8 {
+		conn.Close()
+		return fmt.Errorf("short login response: %d bytes", len(yb.Payload))
+	}
+	if status := yb.Payload[0]; status != 0 {
+		conn.Close()
+		return fmt.Errorf("dell control channel authentication rejected with status code %d", status)
 	}
 
-	pktLen := binary.BigEndian.Uint16(header[6:8])
-	if pktLen < 8 {
-		conn.Close()
-		return fmt.Errorf("invalid yb packet length: %d", pktLen)
-	}
-
-	payloadLen := int(pktLen) - 8
-	ybPayload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(conn, ybPayload); err != nil {
-		conn.Close()
-		return bmc.FormatError("Dell ConnectControl read yb payload", err)
-	}
-
-	statusCode := ybPayload[0]
-	if statusCode != 0 {
-		conn.Close()
-		return fmt.Errorf("dell control channel authentication rejected with status code %d", statusCode)
-	}
-
-	c.ApplianceSessionToken = binary.BigEndian.Uint32(ybPayload[4:8])
+	_ = conn.SetDeadline(time.Time{})
+	c.ApplianceSessionToken = binary.BigEndian.Uint32(yb.Payload[4:8])
 	c.CtrlConn = conn
-	log.Printf("[Dell] Control Channel authenticated successfully (ApplianceSessionToken=0x%08x)", c.ApplianceSessionToken)
+	log.Printf("[Dell] Control Channel authenticated successfully")
 	return nil
 }
 
@@ -154,30 +148,17 @@ func (c *Client) ConnectVideo() error {
 		return bmc.FormatError("Dell ConnectVideo send dc packet", err)
 	}
 
-	// Read ac response (Packet ID 132, length 16)
-	vHeader := make([]byte, 8)
-	if _, err := io.ReadFull(conn, vHeader); err != nil {
+	ac, err := awaitPacket(conn, func(id uint16) bool { return id == pktVideoAuthResp })
+	if err != nil {
 		conn.Close()
-		return bmc.FormatError("Dell ConnectVideo read ac header", err)
+		return bmc.FormatError("Dell ConnectVideo read auth response", err)
+	}
+	if len(ac.Payload) > 0 && ac.Payload[0] != 0 {
+		conn.Close()
+		return fmt.Errorf("dell video channel authentication rejected with code %d", ac.Payload[0])
 	}
 
-	vPktLen := binary.BigEndian.Uint16(vHeader[6:8])
-	if vPktLen < 8 {
-		conn.Close()
-		return fmt.Errorf("invalid ac packet length: %d", vPktLen)
-	}
-
-	vPayload := make([]byte, int(vPktLen)-8)
-	if _, err := io.ReadFull(conn, vPayload); err != nil {
-		conn.Close()
-		return bmc.FormatError("Dell ConnectVideo read ac payload", err)
-	}
-
-	if len(vPayload) > 0 && vPayload[0] != 0 {
-		conn.Close()
-		return fmt.Errorf("dell video channel authentication rejected with code %d", vPayload[0])
-	}
-
+	_ = conn.SetDeadline(time.Time{})
 	c.VideoConn = conn
 	log.Printf("[Dell] Video Channel authenticated successfully on port %d", c.VPort)
 	return nil

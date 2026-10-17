@@ -1,7 +1,7 @@
 package dell
 
 import (
-	"net"
+	"log"
 	"time"
 )
 
@@ -43,31 +43,41 @@ func (c *Client) StartHeartbeat() {
 		}
 	}()
 
-	// 2. Control Channel Reader / Drain Loop
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			select {
-			case <-stopCh:
-				return
-			default:
-				c.ConnMu.Lock()
-				curConn := c.CtrlConn
-				c.ConnMu.Unlock()
-				if curConn == nil {
-					return
-				}
-				_ = curConn.SetReadDeadline(time.Now().Add(controlDrainPoll))
-				_, err := curConn.Read(buf)
-				if err != nil {
-					if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-						continue
-					}
-					return
-				}
-			}
+	// 2. Control Channel reader: consumes BMC notifications so its send buffer never fills.
+	go c.drainControl(stopCh)
+}
+
+// drainControl reads framed control-channel packets until stopped or the connection fails,
+// logging each packet type once so unexpected BMC behaviour is visible.
+func (c *Client) drainControl(stopCh <-chan struct{}) {
+	seen := map[uint16]bool{}
+	for {
+		select {
+		case <-stopCh:
+			return
+		default:
 		}
-	}()
+
+		c.ConnMu.Lock()
+		conn := c.CtrlConn
+		c.ConnMu.Unlock()
+		if conn == nil {
+			return
+		}
+
+		pkt, err := readPacket(conn, controlDrainPoll)
+		if err != nil {
+			if isTimeout(err) {
+				continue
+			}
+			log.Printf("[Dell] Control channel closed: %v", err)
+			return
+		}
+		if !seen[pkt.ID] {
+			seen[pkt.ID] = true
+			log.Printf("[Dell] Control channel: first %s (0x%04x, %d bytes)", packetName(pkt.ID), pkt.ID, len(pkt.Payload))
+		}
+	}
 }
 
 // StopHeartbeat stops the Control Channel heartbeat and background reader.

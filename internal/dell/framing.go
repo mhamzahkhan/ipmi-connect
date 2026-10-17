@@ -47,6 +47,24 @@ func readPacket(conn net.Conn, idle time.Duration) (rawPacket, error) {
 	return rawPacket{ID: binary.BigEndian.Uint16(header[4:6]), Payload: payload}, nil
 }
 
+// maxPreludePackets bounds how many unrelated packets we skip while waiting for an auth reply.
+const maxPreludePackets = 16
+
+// awaitPacket reads packets until want matches one, skipping notifications the BMC may send
+// first. Each read waits up to apcpHandshakeTimeout.
+func awaitPacket(conn net.Conn, want func(id uint16) bool) (rawPacket, error) {
+	for i := 0; i < maxPreludePackets; i++ {
+		pkt, err := readPacket(conn, apcpHandshakeTimeout)
+		if err != nil {
+			return rawPacket{}, err
+		}
+		if want(pkt.ID) {
+			return pkt, nil
+		}
+	}
+	return rawPacket{}, fmt.Errorf("no expected reply within %d packets", maxPreludePackets)
+}
+
 // isTimeout reports whether err is a network timeout (as opposed to EOF or a protocol error).
 func isTimeout(err error) bool {
 	netErr, ok := err.(net.Error)

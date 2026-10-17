@@ -75,7 +75,7 @@ func (c *Client) Login() error {
 	}
 
 	c.IsLoggedIn = true
-	log.Printf("[Supermicro] Authenticated successfully with host %s (SID=%s)", c.Host, c.SID)
+	log.Printf("[Supermicro] Authenticated successfully with host %s", c.Host)
 	return nil
 }
 

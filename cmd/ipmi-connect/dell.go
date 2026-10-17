@@ -19,7 +19,13 @@ const (
 	// dellStaticRefreshAfter forces a full frame before the BMC's 60s idle-video disconnect.
 	dellStaticRefreshAfter = 15 * time.Second
 	dellReconnectDelay     = 2 * time.Second
+	maxReconnectDelay      = time.Minute
 )
+
+// nextBackoff doubles the reconnect delay, capped at maxReconnectDelay.
+func nextBackoff(d time.Duration) time.Duration {
+	return min(2*d, maxReconnectDelay)
+}
 
 // runDell logs in, opens both APCP channels, and starts the keepalive and video goroutines.
 func runDell(ctx context.Context, server *web.Server, host, user, password string) {
@@ -159,16 +165,19 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 	}
 }
 
-// reconnectDell retries until the channels are back or ctx is cancelled (returns false).
+// reconnectDell retries with exponential backoff until the channels are back or ctx is
+// cancelled (returns false).
 func reconnectDell(ctx context.Context, client *dell.Client) bool {
+	delay := dellReconnectDelay
 	for {
 		select {
 		case <-ctx.Done():
 			return false
-		case <-time.After(dellReconnectDelay):
+		case <-time.After(delay):
 		}
 		if err := client.Reconnect(); err != nil {
-			log.Printf("[Dell] Reconnection attempt failed: %v, retrying in 2s...", err)
+			delay = nextBackoff(delay)
+			log.Printf("[Dell] Reconnection attempt failed: %v; retrying in %v", err, delay)
 			continue
 		}
 		log.Printf("[Dell] Reconnected successfully to video channel. Resuming video stream.")

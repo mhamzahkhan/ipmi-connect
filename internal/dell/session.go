@@ -120,7 +120,7 @@ func (c *Client) Login() error {
 	}
 
 	c.IsLoggedIn = true
-	log.Printf("[Dell] Authenticated successfully with host %s (ST1=%s)", c.Host, c.ST1Token)
+	log.Printf("[Dell] Authenticated successfully with host %s", c.Host)
 	return nil
 }
 
@@ -185,26 +185,53 @@ func (c *Client) FetchKVMParameters() error {
 		return bmc.FormatError("Dell JNLP Unmarshal", err)
 	}
 
+	user, passwd := "", ""
+	kmPort, vPort := c.KMPort, c.VPort
 	for _, arg := range jnlp.Application.Arguments {
-		parts := strings.SplitN(arg, "=", 2)
-		if len(parts) == 2 {
-			k, v := parts[0], parts[1]
-			switch k {
-			case "user":
-				c.UserTokenStr = v
-			case "passwd":
-				c.PassTokenStr = v
-			case "kmport":
-				c.KMPort, _ = strconv.Atoi(v)
-			case "vport":
-				c.VPort, _ = strconv.Atoi(v)
+		k, v, ok := strings.Cut(arg, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "user":
+			user = v
+		case "passwd":
+			passwd = v
+		case "kmport":
+			if p, err := strconv.Atoi(v); err == nil {
+				kmPort = p
+			}
+		case "vport":
+			if p, err := strconv.Atoi(v); err == nil {
+				vPort = p
 			}
 		}
 	}
+	if user == "" || passwd == "" {
+		return fmt.Errorf("viewer.jnlp carried no KVM tokens (web session expired?)")
+	}
 
-	log.Printf("[Dell] JNLP Session Tokens acquired: user=%s, passwd=%s, kmport=%d, vport=%d",
-		c.UserTokenStr, c.PassTokenStr, c.KMPort, c.VPort)
+	c.UserTokenStr, c.PassTokenStr = user, passwd
+	c.KMPort, c.VPort = kmPort, vPort
+	log.Printf("[Dell] KVM tokens acquired (kmport=%d, vport=%d)", c.KMPort, c.VPort)
 	return nil
+}
+
+// refreshKVMTokens fetches fresh one-time KVM tokens, logging in to the web UI again first if
+// the old web session has expired (the BMC then serves its login page instead of viewer.jnlp).
+func (c *Client) refreshKVMTokens() error {
+	err := c.FetchKVMParameters()
+	if err == nil {
+		return nil
+	}
+	log.Printf("[Dell] Could not fetch KVM tokens (%v); logging in to the web UI again", err)
+	c.SessionMu.Lock()
+	c.IsLoggedIn = false
+	c.SessionMu.Unlock()
+	if err := c.Login(); err != nil {
+		return fmt.Errorf("re-login: %w", err)
+	}
+	return c.FetchKVMParameters()
 }
 
 // KeepAlive sends a heartbeat to prevent the BMC WebGUI session from expiring.
