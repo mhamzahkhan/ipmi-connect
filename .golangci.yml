@@ -1,0 +1,22 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # Close errors on read paths, error paths and sockets being torn down carry no
+      # actionable information here. Close on a written file is still checked by hand.
+      exclude-functions:
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - (net.Conn).Close
+        - (*os.File).Close
+        - (*ipmi-connect/internal/web.WSConn).Close
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - ipmi-connect

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IPMI Modern Console - Antigravity</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header Bar -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="brand-badge">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+          <span class="brand-name">IPMI<span class="accent-text">CONNECT</span></span>
+        </div>
+        
+        <div class="server-info-badge">
+          <span class="status-dot connected" id="statusDot"></span>
+          <span class="server-target" id="serverTarget">Connecting...</span>
+          <span class="badge badge-vendor" id="vendorBadge">IPMI</span>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <!-- Power Controls -->
+        <div class="power-bar">
+          <button class="btn btn-power-on" id="btnPowerOn" title="Power On Server">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
+            <span>Power On</span>
+          </button>
+
+          <button class="btn btn-power-off" id="btnPowerOff" title="Force Power Off">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            <span>Power Off</span>
+          </button>
+
+          <button class="btn btn-power-reset" id="btnPowerReset" title="Hard Reset">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            <span>Reset</span>
+          </button>
+
+          <button class="btn btn-power-cycle" id="btnPowerCycle" title="Power Cycle (Off then On)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg>
+            <span>Power Cycle</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <!-- Virtual Media Button -->
+        <button class="btn btn-vmedia" id="btnOpenVMedia" title="Virtual Media Mounting">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+          <span>Virtual Media</span>
+          <span class="vmedia-status-pill" id="vmediaPill">None</span>
+        </button>
+
+        <!-- Contrast Calibration Button -->
+        <button class="btn btn-icon active" id="btnAutoContrast" title="Toggle True Black / Auto Contrast (Pedestal Calibration)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor"></path>
+          </svg>
+        </button>
+
+        <!-- Fullscreen Button -->
+        <button class="btn btn-icon" id="btnFullscreen" title="Toggle Fullscreen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+        </button>
+
+        <!-- Screenshot Button -->
+        <button class="btn btn-icon" id="btnScreenshot" title="Capture Screenshot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Macro Toolbar (Keystrokes) -->
+    <div class="macro-toolbar">
+      <div class="macro-group">
+        <span class="macro-label">Macros:</span>
+        <button class="btn-macro" data-macro="cad">Ctrl + Alt + Del</button>
+        <button class="btn-macro" data-macro="alt_tab">Alt + Tab</button>
+        <button class="btn-macro" data-macro="alt_f4">Alt + F4</button>
+        <button class="btn-macro" data-macro="win">Win Key</button>
+        <button class="btn-macro" data-macro="esc">Esc</button>
+        <button class="btn-macro" data-macro="print_screen">PrtScr</button>
+      </div>
+
+      <div class="macro-divider"></div>
+
+      <div class="macro-group function-keys">
+        <span class="macro-label">BIOS / Boot:</span>
+        <button class="btn-macro" data-macro="f1">F1</button>
+        <button class="btn-macro" data-macro="f2">F2 (Setup)</button>
+        <button class="btn-macro" data-macro="f10">F10 (Utility)</button>
+        <button class="btn-macro" data-macro="f11">F11 (Boot Menu)</button>
+        <button class="btn-macro" data-macro="f12">F12 (PXE)</button>
+      </div>
+
+      <div class="macro-stats" id="streamStats">
+        <span id="statRes">Resolution: -- x --</span>
+        <span class="stat-sep">•</span>
+        <span id="statFPS">FPS: 0</span>
+        <span class="stat-sep">•</span>
+        <span id="statLatency">Ping: -- ms</span>
+      </div>
+    </div>
+
+    <!-- Main Viewport for Remote Display -->
+    <main class="console-viewport" id="viewport">
+      <div class="canvas-wrapper" id="canvasWrapper">
+        <canvas id="screenCanvas" width="1024" height="768"></canvas>
+        <div class="canvas-overlay" id="connectingOverlay">
+          <div class="spinner"></div>
+          <div class="overlay-text" id="overlayStatus">Establishing secure BMC console link...</div>
+          <div class="overlay-subtext" id="overlaySubtext">Negotiating TLS and protocol handshakes</div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Virtual Media Modal -->
+    <div class="modal-backdrop" id="vmediaModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+            <h3>Virtual Media Manager</h3>
+          </div>
+          <button class="btn-close" id="btnCloseVMedia">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <p class="modal-description">
+            Mount a local ISO image file or disk image directly to the host server's virtual CD/DVD-ROM or USB drive.
+          </p>
+
+          <div class="upload-dropzone" id="dropzone">
+            <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            <div class="dropzone-text">Choose an ISO image from your computer</div>
+            <div class="dropzone-hint">Supports .iso, .img, .bin image formats</div>
+            <input type="file" id="fileInput" accept=".iso,.img,.bin" style="display: none;">
+            <button class="btn btn-secondary" id="btnBrowseFile">Select ISO File</button>
+            <div class="selected-file-name" id="selectedFileName">No file selected</div>
+          </div>
+
+          <div class="vmedia-options">
+            <label class="checkbox-label">
+              <input type="checkbox" id="chkReadOnly" checked>
+              <span>Mount as Read-Only CD/DVD</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-danger" id="btnUnmount" disabled>Eject / Unmount</button>
+          <div class="footer-right">
+            <button class="btn btn-secondary" id="btnCancelVMedia">Cancel</button>
+            <button class="btn btn-primary" id="btnMount" disabled>Mount to Server</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Power Confirmation Modal -->
+    <div class="modal-backdrop" id="powerModal">
+      <div class="modal-card modal-sm">
+        <div class="modal-header">
+          <div class="modal-title">
+            <svg class="warning-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <h3 id="powerModalTitle">Confirm Power Action</h3>
+          </div>
+          <button class="btn-close" id="btnClosePowerModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p id="powerModalMessage">Are you sure you want to execute this chassis power command?</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btnCancelPower">Cancel</button>
+          <button class="btn btn-danger" id="btnConfirmPower">Execute</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
