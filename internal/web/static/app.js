@@ -23,17 +23,6 @@ import { KEY_TO_HID } from '/keymap.js';
   const statLatency = document.getElementById('statLatency');
 
   // Modals
-  const vmediaModal = document.getElementById('vmediaModal');
-  const btnOpenVMedia = document.getElementById('btnOpenVMedia');
-  const btnCloseVMedia = document.getElementById('btnCloseVMedia');
-  const btnCancelVMedia = document.getElementById('btnCancelVMedia');
-  const dropzone = document.getElementById('dropzone');
-  const fileInput = document.getElementById('fileInput');
-  const btnBrowseFile = document.getElementById('btnBrowseFile');
-  const selectedFileName = document.getElementById('selectedFileName');
-  const btnMount = document.getElementById('btnMount');
-  const btnUnmount = document.getElementById('btnUnmount');
-  const vmediaPill = document.getElementById('vmediaPill');
 
   const powerModal = document.getElementById('powerModal');
   const powerModalTitle = document.getElementById('powerModalTitle');
@@ -48,7 +37,6 @@ import { KEY_TO_HID } from '/keymap.js';
   let frameCount = 0;
   let lastFPSCheck = performance.now();
   let currentPowerAction = null;
-  let selectedFile = null;
   let autoContrastEnabled = true;
   let contrastLUT = identityLUT();
   let lastCachedFrame = null;
@@ -58,7 +46,6 @@ import { KEY_TO_HID } from '/keymap.js';
     setupWebSocket();
     setupMouseAndKeyboard();
     setupPowerButtons();
-    setupVirtualMedia();
     setupMacros();
     setupFullscreenAndScreenshot();
     setupAutoContrast();
@@ -75,18 +62,6 @@ import { KEY_TO_HID } from '/keymap.js';
 
       serverTarget.textContent = data.host || '127.0.0.1';
       vendorBadge.textContent = (data.target_type || 'IPMI').toUpperCase();
-
-      if (data.virtual_media) {
-        vmediaPill.textContent = data.virtual_media;
-        vmediaPill.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
-        vmediaPill.style.color = '#10b981';
-        btnUnmount.disabled = false;
-      } else {
-        vmediaPill.textContent = 'None';
-        vmediaPill.style.backgroundColor = 'var(--border-color)';
-        vmediaPill.style.color = 'var(--text-muted)';
-        btnUnmount.disabled = true;
-      }
 
       // Canvas size is owned by the video stream: resizing a canvas clears it, so status polls
       // must never touch it.
@@ -241,24 +216,32 @@ import { KEY_TO_HID } from '/keymap.js';
   // Mouse and Keyboard Input Capture
   function setupMouseAndKeyboard() {
     canvas.tabIndex = 1000;
+    let currentButtons = 0;
+
+    function send(msg) {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+    }
 
     function sendPointer(mask, clientX, clientY) {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-      const canvasX = Math.round((clientX - rect.left) * scaleX);
-      const canvasY = Math.round((clientY - rect.top) * scaleY);
-
-      ws.send(JSON.stringify({
+      const canvasX = Math.round((clientX - rect.left) * (canvas.width / rect.width));
+      const canvasY = Math.round((clientY - rect.top) * (canvas.height / rect.height));
+      send({
         type: 'pointer',
         mask: mask,
         x: Math.max(0, Math.min(canvas.width - 1, canvasX)),
         y: Math.max(0, Math.min(canvas.height - 1, canvasY))
-      }));
+      });
     }
 
-    let currentButtons = 0;
+    // Ask the server to release every key and button this tab is holding on the host.
+    function releaseAll() {
+      currentButtons = 0;
+      send({ type: 'release' });
+    }
+
+    // RFB button bits: left 1, middle 2, right 4 (the server converts per BMC).
+    const BUTTON_BITS = [1, 2, 4];
 
     canvas.addEventListener('mousemove', (e) => {
       sendPointer(currentButtons, e.clientX, e.clientY);
@@ -267,60 +250,46 @@ import { KEY_TO_HID } from '/keymap.js';
     canvas.addEventListener('mousedown', (e) => {
       e.preventDefault();
       canvas.focus();
-      if (e.button === 0) currentButtons |= 1; // Left
-      if (e.button === 1) currentButtons |= 2; // Middle
-      if (e.button === 2) currentButtons |= 4; // Right
+      currentButtons |= BUTTON_BITS[e.button] || 0;
       sendPointer(currentButtons, e.clientX, e.clientY);
     });
 
-    canvas.addEventListener('mouseup', (e) => {
-      e.preventDefault();
-      if (e.button === 0) currentButtons &= ~1;
-      if (e.button === 1) currentButtons &= ~2;
-      if (e.button === 2) currentButtons &= ~4;
+    // On window, not the canvas: a button released outside the console must still be released.
+    window.addEventListener('mouseup', (e) => {
+      const bit = BUTTON_BITS[e.button] || 0;
+      if (!(currentButtons & bit)) return;
+      currentButtons &= ~bit;
       sendPointer(currentButtons, e.clientX, e.clientY);
     });
 
-    canvas.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-    });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    // Keyboard capture
+    function consoleFocused() {
+      return document.activeElement === canvas || canvasWrapper.contains(document.activeElement);
+    }
+
     window.addEventListener('keydown', (e) => {
-      if (document.activeElement !== canvas && !canvasWrapper.contains(document.activeElement)) {
-        return;
-      }
-      if (e.key.startsWith('F') || e.key === 'Tab' || e.key === 'Alt') {
-        e.preventDefault();
-      }
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        const hid = KEY_TO_HID[e.code] || 0;
-        ws.send(JSON.stringify({
-          type: 'key',
-          down: true,
-          key: e.key,
-          code: e.code,
-          keyCode: e.keyCode,
-          hidCode: hid
-        }));
-      }
+      if (!consoleFocused()) return;
+      // Keys belong to the host while the console has focus: stop Backspace, Space, arrows, Tab,
+      // F-keys and browser shortcuts acting on this page. (The OS still keeps a few, like Cmd+Q.)
+      e.preventDefault();
+      if (e.repeat) return; // the host's own key repeat handles held keys
+      send({ type: 'key', down: true, hidCode: KEY_TO_HID[e.code] || 0 });
     });
 
     window.addEventListener('keyup', (e) => {
-      if (document.activeElement !== canvas && !canvasWrapper.contains(document.activeElement)) {
-        return;
-      }
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        const hid = KEY_TO_HID[e.code] || 0;
-        ws.send(JSON.stringify({
-          type: 'key',
-          down: false,
-          key: e.key,
-          code: e.code,
-          keyCode: e.keyCode,
-          hidCode: hid
-        }));
-      }
+      if (!consoleFocused()) return;
+      e.preventDefault();
+      send({ type: 'key', down: false, hidCode: KEY_TO_HID[e.code] || 0 });
+      // macOS browsers send no keyup for keys released while Cmd is held, so Cmd+C would leave
+      // C held on the host. Releasing Cmd releases everything.
+      if (e.code === 'MetaLeft' || e.code === 'MetaRight') releaseAll();
+    });
+
+    // Focus leaving the page means keyups will not arrive here: release what is held.
+    window.addEventListener('blur', releaseAll);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) releaseAll();
     });
   }
 
@@ -381,90 +350,6 @@ import { KEY_TO_HID } from '/keymap.js';
         }
       } catch (err) {
         alert(`Failed to execute power action: ${err.message}`);
-      }
-    });
-  }
-
-  // Virtual Media
-  function setupVirtualMedia() {
-    btnOpenVMedia.addEventListener('click', () => {
-      vmediaModal.classList.add('open');
-    });
-
-    btnCloseVMedia.addEventListener('click', () => vmediaModal.classList.remove('open'));
-    btnCancelVMedia.addEventListener('click', () => vmediaModal.classList.remove('open'));
-
-    btnBrowseFile.addEventListener('click', () => fileInput.click());
-
-    fileInput.addEventListener('change', (e) => {
-      if (e.target.files.length > 0) {
-        selectedFile = e.target.files[0];
-        selectedFileName.textContent = `${selectedFile.name} (${(selectedFile.size / (1024*1024)).toFixed(1)} MB)`;
-        btnMount.disabled = false;
-      }
-    });
-
-    // Drag and drop
-    dropzone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropzone.classList.add('dragover');
-    });
-    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-    dropzone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropzone.classList.remove('dragover');
-      if (e.dataTransfer.files.length > 0) {
-        selectedFile = e.dataTransfer.files[0];
-        selectedFileName.textContent = `${selectedFile.name} (${(selectedFile.size / (1024*1024)).toFixed(1)} MB)`;
-        btnMount.disabled = false;
-      }
-    });
-
-    btnMount.addEventListener('click', async () => {
-      if (!selectedFile) return;
-      btnMount.disabled = true;
-      btnMount.textContent = 'Mounting...';
-
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      formData.append('readonly', document.getElementById('chkReadOnly').checked);
-
-      try {
-        const resp = await fetch('/api/vmedia/mount', {
-          method: 'POST',
-          body: formData
-        });
-        const res = await resp.json();
-        if (resp.ok) {
-          vmediaModal.classList.remove('open');
-          pollStatus();
-          alert(`Virtual Media Mounted: ${selectedFile.name}`);
-        } else {
-          alert(`Mount error: ${res.error || 'Failed'}`);
-        }
-      } catch (err) {
-        alert(`Error mounting ISO: ${err.message}`);
-      } finally {
-        btnMount.textContent = 'Mount to Server';
-      }
-    });
-
-    btnUnmount.addEventListener('click', async () => {
-      btnUnmount.disabled = true;
-      btnUnmount.textContent = 'Ejecting...';
-      try {
-        const resp = await fetch('/api/vmedia/unmount', { method: 'POST' });
-        if (resp.ok) {
-          selectedFile = null;
-          selectedFileName.textContent = 'No file selected';
-          vmediaModal.classList.remove('open');
-          pollStatus();
-          alert('Virtual Media ejected successfully.');
-        }
-      } catch (err) {
-        alert(`Eject error: ${err.message}`);
-      } finally {
-        btnUnmount.textContent = 'Eject / Unmount';
       }
     });
   }

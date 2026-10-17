@@ -40,11 +40,11 @@ func eventually(t *testing.T, cond func() bool) {
 
 func TestWebSocketSessionReleasesKeysOnClose(t *testing.T) {
 	fc := &fakeConsole{}
-	_, url := startTestServer(t, fc)
+	srv, url := startTestServer(t, fc)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, url, nil)
+	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: authHeader(srv)})
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -68,11 +68,12 @@ func TestWebSocketSessionReleasesKeysOnClose(t *testing.T) {
 }
 
 func TestWebSocketRejectsCrossSiteOrigin(t *testing.T) {
-	_, url := startTestServer(t, &fakeConsole{})
+	srv, url := startTestServer(t, &fakeConsole{})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	hdr := http.Header{"Origin": []string{"https://evil.example"}}
+	hdr := authHeader(srv)
+	hdr.Set("Origin", "https://evil.example")
 	conn, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: hdr})
 	if err == nil {
 		_ = conn.CloseNow()
@@ -107,4 +108,19 @@ func TestBroadcastResyncsClientsThatFallBehind(t *testing.T) {
 		t.Errorf("fast client has %d frames queued, want 1", got)
 	}
 	eventually(t, func() bool { _, r := fc.snapshot(); return r == 1 })
+}
+
+func TestWebSocketRequiresSession(t *testing.T) {
+	_, url := startTestServer(t, &fakeConsole{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, resp, err := websocket.Dial(ctx, url, nil)
+	if err == nil {
+		_ = conn.CloseNow()
+		t.Fatal("WebSocket without the session cookie was accepted")
+	}
+	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %v, want 401", resp)
+	}
 }

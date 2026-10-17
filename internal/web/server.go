@@ -5,7 +5,6 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log"
 	"mime"
@@ -30,14 +29,13 @@ var staticFS embed.FS
 type Server struct {
 	State       bmc.SessionState
 	StateMu     sync.RWMutex
-	Console     bmc.Console // set once before Start; nil until the BMC is connected
+	Console     bmc.Console // set once before Run; nil until the BMC is connected
 	clients     map[*wsClient]struct{}
 	clientsMu   sync.Mutex // guards clients and lastResync
 	lastResync  time.Time
 	Port        int
 	HTTPServer  *http.Server
-	MountedISO  string
-	ISOReader   io.ReadSeekCloser
+	token       string // per-run secret for the session cookie
 	LastFrame   []byte // latest raw RGBA frame, replayed to new browsers
 	LastFrameMu sync.RWMutex
 }
@@ -45,6 +43,7 @@ type Server struct {
 // NewServer initializes a new Web UI server.
 func NewServer(port int, state bmc.SessionState) *Server {
 	return &Server{
+		token:   newToken(),
 		State:   state,
 		Port:    port,
 		clients: make(map[*wsClient]struct{}),
@@ -62,10 +61,8 @@ func (s *Server) routes() (http.Handler, error) {
 	mux.Handle("/", http.FileServer(http.FS(subFS)))
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/power", s.handlePower)
-	mux.HandleFunc("/api/vmedia/mount", s.handleMount)
-	mux.HandleFunc("/api/vmedia/unmount", s.handleUnmount)
 	mux.HandleFunc("/ws", s.handleWS)
-	return mux, nil
+	return s.guard(mux), nil
 }
 
 // Run serves the console until ctx is cancelled, then shuts the HTTP server down.
@@ -86,12 +83,14 @@ func (s *Server) Run(ctx context.Context, openBrowser bool) error {
 	s.Port = listener.Addr().(*net.TCPAddr).Port
 
 	s.HTTPServer = &http.Server{
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
 	}
 
-	url := fmt.Sprintf("http://127.0.0.1:%d", s.Port)
+	// The token in this link becomes an HttpOnly session cookie; anyone without it is refused.
+	url := fmt.Sprintf("http://127.0.0.1:%d/auth?t=%s", s.Port, s.token)
 	log.Printf("==================================================================")
 	log.Printf("🚀 IPMI Modern Console active at: %s", url)
 	log.Printf("==================================================================")

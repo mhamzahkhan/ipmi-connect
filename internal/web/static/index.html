@@ -3,11 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IPMI Modern Console - Antigravity</title>
+  <title>IPMI Console</title>
   <link rel="stylesheet" href="/style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
   <div class="app-container">
@@ -57,12 +54,6 @@
       </div>
 
       <div class="header-right">
-        <!-- Virtual Media Button -->
-        <button class="btn btn-vmedia" id="btnOpenVMedia" title="Virtual Media Mounting">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
-          <span>Virtual Media</span>
-          <span class="vmedia-status-pill" id="vmediaPill">None</span>
-        </button>
 
         <!-- Contrast Calibration Button -->
         <button class="btn btn-icon active" id="btnAutoContrast" title="Toggle True Black / Auto Contrast (Pedestal Calibration)">
@@ -127,53 +118,6 @@
         </div>
       </div>
     </main>
-
-    <!-- Virtual Media Modal -->
-    <div class="modal-backdrop" id="vmediaModal">
-      <div class="modal-card">
-        <div class="modal-header">
-          <div class="modal-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
-            <h3>Virtual Media Manager</h3>
-          </div>
-          <button class="btn-close" id="btnCloseVMedia">&times;</button>
-        </div>
-
-        <div class="modal-body">
-          <p class="modal-description">
-            Mount a local ISO image file or disk image directly to the host server's virtual CD/DVD-ROM or USB drive.
-          </p>
-
-          <div class="upload-dropzone" id="dropzone">
-            <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="17 8 12 3 7 8"></polyline>
-              <line x1="12" y1="3" x2="12" y2="15"></line>
-            </svg>
-            <div class="dropzone-text">Choose an ISO image from your computer</div>
-            <div class="dropzone-hint">Supports .iso, .img, .bin image formats</div>
-            <input type="file" id="fileInput" accept=".iso,.img,.bin" style="display: none;">
-            <button class="btn btn-secondary" id="btnBrowseFile">Select ISO File</button>
-            <div class="selected-file-name" id="selectedFileName">No file selected</div>
-          </div>
-
-          <div class="vmedia-options">
-            <label class="checkbox-label">
-              <input type="checkbox" id="chkReadOnly" checked>
-              <span>Mount as Read-Only CD/DVD</span>
-            </label>
-          </div>
-        </div>
-
-        <div class="modal-footer">
-          <button class="btn btn-danger" id="btnUnmount" disabled>Eject / Unmount</button>
-          <div class="footer-right">
-            <button class="btn btn-secondary" id="btnCancelVMedia">Cancel</button>
-            <button class="btn btn-primary" id="btnMount" disabled>Mount to Server</button>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- Power Confirmation Modal -->
     <div class="modal-backdrop" id="powerModal">

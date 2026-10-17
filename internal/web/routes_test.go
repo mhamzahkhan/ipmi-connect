@@ -33,7 +33,7 @@ func TestRoutesServeEmbeddedUI(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			h.ServeHTTP(rec, authed(srv, httptest.NewRequest(http.MethodGet, tt.path, nil)))
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)
@@ -56,7 +56,7 @@ func TestStatusReportsSessionState(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	h.ServeHTTP(rec, authed(srv, httptest.NewRequest(http.MethodGet, "/api/status", nil)))
 
 	var got bmc.SessionState
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
@@ -75,7 +75,7 @@ func TestPowerRejectsNonPost(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/power", nil))
+	h.ServeHTTP(rec, authed(srv, httptest.NewRequest(http.MethodGet, "/api/power", nil)))
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rec.Code)
@@ -92,7 +92,7 @@ func TestSetScreenSizeUpdatesStatus(t *testing.T) {
 	srv.SetScreenSize(720, 400)
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	h.ServeHTTP(rec, authed(srv, httptest.NewRequest(http.MethodGet, "/api/status", nil)))
 	var got bmc.SessionState
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
