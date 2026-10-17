@@ -77,7 +77,7 @@ func (s *Server) routes() (http.Handler, error) {
 	mux.Handle("/", http.FileServer(http.FS(subFS)))
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/power", s.handlePower)
-	mux.HandleFunc("/api/media", s.handleMedia)
+	s.mediaRoutes(mux)
 	mux.HandleFunc("/api/screenshot.png", s.handleScreenshot)
 	mux.HandleFunc("/ws", s.handleWS)
 	return s.guard(mux), nil

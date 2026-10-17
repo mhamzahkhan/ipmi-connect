@@ -96,7 +96,8 @@ func TestParseVMCredentialsRejectsShortReply(t *testing.T) {
 	}
 }
 
-// avmpBMC plays the BMC's virtual media side after the APCP greeting.
+// avmpBMC plays the BMC's virtual media side after the APCP greeting: login OK, the C6220's
+// three free drives, and it reports when the client releases a drive.
 func avmpBMC(t *testing.T, released chan<- struct{}) func(conn net.Conn) {
 	return func(conn net.Conn) {
 		read := func() (uint16, []byte) {
@@ -119,23 +120,21 @@ func avmpBMC(t *testing.T, released chan<- struct{}) func(conn net.Conn) {
 			return
 		}
 		send(0x8100, make([]byte, 101))
-		read() // GET_VDISK_INFO
-		send(0x8200, []byte{0xff, 0xff, 0, 1, 2, 0, 0, 0})
-		read() // map
 		for {
 			typ, _ := read()
-			if typ == 0x0220 {
+			switch typ {
+			case 0:
+				return
+			case 0x0200:
+				send(0x8200, []byte{0xff, 0xff, 0, 3, 2, 0, 0, 1, 1, 0, 0, 1, 4, 0, 0, 1})
+			case 0x0220:
 				released <- struct{}{}
-				return
-			}
-			if typ == 0 {
-				return
 			}
 		}
 	}
 }
 
-func TestMountAndEjectISO(t *testing.T) {
+func TestVirtualMediaThroughTheControlChannel(t *testing.T) {
 	released := make(chan struct{}, 1)
 	host, port := fakeAPCP(t, avmpBMC(t, released))
 	c := NewClient(host, "root", "pw")
@@ -146,96 +145,30 @@ func TestMountAndEjectISO(t *testing.T) {
 	if err := os.WriteFile(iso, make([]byte, 4*2048), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.MountISO(iso); err != nil {
-		t.Fatalf("MountISO: %v", err)
+	img, err := c.AddImage(iso, false)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if st := c.MediaStatus(); st.State != bmc.MediaMounted || st.Image != "test.iso" {
+	if err := c.MapImage(img.ID, bmc.TargetCD); err != nil {
+		t.Fatalf("MapImage: %v", err)
+	}
+	if st := c.MediaStatus(); len(st.Drives) != 1 || st.Drives[0].Image != "test.iso" || st.Drives[0].Mounting {
 		t.Errorf("status %+v", st)
 	}
-	if err := c.MountISO(iso); err == nil {
-		t.Error("second mount should be refused while one is active")
-	}
-	if err := c.UnmountISO(); err != nil {
-		t.Fatalf("UnmountISO: %v", err)
+	if err := c.UnmapDrive(bmc.TargetCD); err != nil {
+		t.Fatalf("UnmapDrive: %v", err)
 	}
 	select {
 	case <-released:
 	case <-time.After(3 * time.Second):
 		t.Fatal("BMC never saw the release")
 	}
-	if st := c.MediaStatus(); st.State != bmc.MediaNone {
-		t.Errorf("status after eject %+v", st)
-	}
 }
 
-func TestMountISORejectsBadPaths(t *testing.T) {
-	c := NewClient("192.0.2.10", "root", "pw")
-	dir := t.TempDir()
-	empty := filepath.Join(dir, "empty.iso")
-	_ = os.WriteFile(empty, nil, 0o600)
-	for _, p := range []string{"relative.iso", filepath.Join(dir, "missing.iso"), dir, empty} {
-		if err := c.MountISO(p); err == nil {
-			t.Errorf("MountISO(%q) succeeded", p)
-		}
-	}
-}
-
-// stallingBMC logs the client in and then never answers the drive-info request.
-func stallingBMC(conn net.Conn) {
-	hdr := make([]byte, 10)
-	if _, err := io.ReadFull(conn, hdr); err != nil {
-		return
-	}
-	_, _ = io.ReadFull(conn, make([]byte, binary.BigEndian.Uint32(hdr[4:8])-10))
-	b := []byte("AVMP\x00\x00\x00\x6f\x81\x00")
-	_, _ = conn.Write(append(b, make([]byte, 101)...))
-	_, _ = io.Copy(io.Discard, conn)
-}
-
-func TestEjectStopsAMountInProgress(t *testing.T) {
-	host, port := fakeAPCP(t, stallingBMC)
-	c := NewClient(host, "root", "pw")
-	c.VPort = port
-	fakeControl(t, c, "719885386", "1649760492")
-	iso := filepath.Join(t.TempDir(), "test.iso")
-	_ = os.WriteFile(iso, make([]byte, 2048), 0o600)
-
-	mountErr := make(chan error, 1)
-	go func() { mountErr <- c.MountISO(iso) }()
-	waitUntil(t, func() bool { return c.MediaStatus().State == bmc.MediaMounting })
-
-	start := time.Now()
-	if err := c.UnmountISO(); err != nil {
-		t.Errorf("UnmountISO during a mount: %v", err)
-	}
-	if time.Since(start) > 2*time.Second {
-		t.Errorf("eject took %v", time.Since(start))
-	}
-	if err := <-mountErr; err == nil {
-		t.Error("MountISO should report that it was cancelled")
-	}
-	if st := c.MediaStatus(); st.State != bmc.MediaNone {
-		t.Errorf("status %+v after eject", st)
-	}
-}
-
-func TestNoMountsAfterLogout(t *testing.T) {
+func TestNoVirtualMediaAfterLogout(t *testing.T) {
 	c := NewClient("192.0.2.10", "root", "pw")
 	c.loggingOut.Store(true)
-	iso := filepath.Join(t.TempDir(), "test.iso")
-	_ = os.WriteFile(iso, make([]byte, 2048), 0o600)
-	if err := c.MountISO(iso); err == nil {
-		t.Error("MountISO accepted a mount during logout")
-	}
-}
-
-func waitUntil(t *testing.T, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not reached")
-		}
-		time.Sleep(5 * time.Millisecond)
+	if _, err := c.openVMedia(context.Background()); err == nil {
+		t.Error("opened a virtual media session during logout")
 	}
 }

@@ -127,8 +127,8 @@ func (c *Client) Login() error {
 
 // Logout releases the GUI session on the BMC.
 func (c *Client) Logout() {
-	c.loggingOut.Store(true) // first, so no new mount can start
-	c.ejectOnLogout()
+	c.loggingOut.Store(true) // first, so no new virtual media session can start
+	c.Manager.Close()        // eject everything while the KVM session still stands
 	c.SessionMu.Lock()
 	defer c.SessionMu.Unlock()
 

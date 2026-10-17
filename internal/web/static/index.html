@@ -56,6 +56,13 @@
       <div class="header-right">
 
 
+        <!-- Virtual Media: shown only for BMCs that support it -->
+        <button class="btn btn-media" id="btnMedia" title="Virtual Media" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+          <span>Virtual Media</span>
+          <span class="media-badge" id="mediaBadge" hidden></span>
+        </button>
+
         <!-- Fullscreen Button -->
         <button class="btn btn-icon" id="btnFullscreen" title="Toggle Fullscreen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
@@ -91,17 +98,6 @@
         <button class="btn-macro" data-macro="f12">F12 (PXE)</button>
       </div>
 
-      <div class="macro-divider media-only" hidden></div>
-
-      <!-- Virtual CD: shown only for BMCs that support it -->
-      <div class="macro-group media-group media-only" hidden>
-        <span class="macro-label">Virtual CD:</span>
-        <input type="text" class="media-path" id="mediaPath" placeholder="/full/path/to/image.iso" spellcheck="false" autocomplete="off">
-        <button class="btn-macro" id="btnMediaMount">Mount</button>
-        <button class="btn-macro" id="btnMediaEject" hidden>Eject</button>
-        <span class="media-status" id="mediaStatus"></span>
-      </div>
-
       <div class="macro-stats" id="streamStats">
         <span class="stat-notice" id="statNotice" hidden></span>
         <span id="statRes">Resolution: -- x --</span>
@@ -125,6 +121,71 @@
     </main>
 
     <!-- Power Confirmation Modal -->
+    <div class="modal-backdrop" id="mediaModal">
+      <div class="modal-card modal-lg">
+        <div class="modal-header">
+          <div class="modal-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+            <h3>Virtual Media</h3>
+          </div>
+          <button class="btn-close" id="btnCloseMedia">&times;</button>
+        </div>
+        <div class="modal-body media-body">
+          <form class="media-add" id="mediaAddForm">
+            <input type="text" class="media-input" id="mediaPath" placeholder="/full/path/to/image.iso or .img" spellcheck="false" autocomplete="off">
+            <label class="media-check"><input type="checkbox" id="mediaAddReadOnly"> Read-only</label>
+            <button type="submit" class="btn btn-secondary">Add Image</button>
+          </form>
+
+          <details class="media-create">
+            <summary>Create Image…</summary>
+            <form id="mediaCreateForm">
+              <div class="media-create-row">
+                <label class="media-check"><input type="radio" name="createKind" value="blank" checked> Blank</label>
+                <label class="media-check"><input type="radio" name="createKind" value="folder"> From folder</label>
+                <select id="mediaCreateSize" title="Blank images are FAT-formatted, so the host can copy files onto them">
+                  <option value="1474560">1.44 MB floppy</option>
+                  <option value="2949120">2.88 MB floppy</option>
+                  <option value="67108864">64 MiB</option>
+                  <option value="268435456">256 MiB</option>
+                  <option value="1073741824" selected>1 GiB</option>
+                  <option value="4294967296">4 GiB</option>
+                  <option value="17179869184">16 GiB</option>
+                </select>
+                <input type="text" class="media-input" id="mediaCreateFolder" placeholder="/full/path/to/folder" spellcheck="false" autocomplete="off" hidden>
+              </div>
+              <div class="media-create-row">
+                <input type="text" class="media-input" id="mediaCreatePath" placeholder="/full/path/to/new-image.img" spellcheck="false" autocomplete="off">
+                <input type="text" class="media-input media-label" id="mediaCreateLabel" placeholder="LABEL" maxlength="11" spellcheck="false" autocomplete="off">
+                <button type="submit" class="btn btn-secondary">Create</button>
+              </div>
+            </form>
+          </details>
+
+          <h4 class="media-heading">Images</h4>
+          <table class="media-table">
+            <thead><tr><th>Image</th><th>Size</th><th>Read-only</th><th>Drive</th><th></th></tr></thead>
+            <tbody id="mediaImages"></tbody>
+          </table>
+
+          <h4 class="media-heading">Drives</h4>
+          <table class="media-table">
+            <thead><tr><th>Drive</th><th>Image</th><th>Read</th><th>Written</th><th></th></tr></thead>
+            <tbody id="mediaDrives"></tbody>
+          </table>
+
+          <h4 class="media-heading">Transfer <span class="media-rates" id="mediaRates"></span></h4>
+          <canvas class="media-graph" id="mediaGraph" width="720" height="90"></canvas>
+
+          <p class="media-error" id="mediaError" hidden></p>
+        </div>
+        <div class="modal-footer media-footer">
+          <button class="btn btn-secondary" id="btnUsbReset" title="Re-enumerate the BMC's USB devices on the host (virtual media, keyboard and mouse)">USB Reset</button>
+          <button class="btn btn-secondary" id="btnMediaDone">Close</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-backdrop" id="powerModal">
       <div class="modal-card modal-sm">
         <div class="modal-header">

@@ -7,205 +7,208 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
 const (
 	heartbeatInterval  = 10 * time.Second // the vendor client's idle heartbeat
 	setupTimeout       = 30 * time.Second // login and drive info (the vendor's LoginTimeout)
-	driveWaitTimeout   = 90 * time.Second
+	driveWaitTimeout   = 90 * time.Second // for the BMC to free a drive after a previous session
 	driveRetryInterval = 3 * time.Second
 	writeTimeout       = 30 * time.Second // a data packet may queue behind slow USB transfers
-	ejectTimeout       = 2 * time.Second  // best effort: the connection closes straight after
-	// maxPacket bounds BMC messages; requests are tiny, and writes to our read-only disc small.
+	ejectTimeout       = 2 * time.Second  // best effort: the connection usually closes next
+	// maxPacket bounds BMC messages. Writes carry data, so allow a generous 1 MiB.
 	maxPacket = 1 << 20
-	// maxChunkBlocks caps data per packet at the vendor's 32 KiB read size.
-	maxChunkBlocks = 16
-	// maxReadBlocks bounds one read request (64 MiB); the host asks for far less.
-	maxReadBlocks = 32768
 )
 
-// Status describes a mount for the UI.
-type Status struct {
-	Mounted     bool  `json:"mounted"`
-	BytesServed int64 `json:"bytes_served"`
-}
-
-// Session is one AVMP connection that maps a single disc image.
+// Session is one AVMP connection. It carries every mapped drive: the BMC routes reads and
+// writes by drive ID, and one goroutine serves them in order, as the vendor client does.
 type Session struct {
 	conn           net.Conn
 	user, password string
 	heartbeatEvery time.Duration
-	driveWait      time.Duration // how long to wait for a free CD drive
+	driveWait      time.Duration
 	driveRetry     time.Duration
 
-	writeMu sync.Mutex
-	mounted atomic.Bool
-	served  atomic.Int64
+	writeMu sync.Mutex // one packet at a time on the wire
+	mapMu   sync.Mutex // one Map at a time: they share the drive-info replies
+
+	mu        sync.Mutex
+	drives    map[uint16]*drive
+	readOnly  bool   // the BMC's READ_ONLY option (0x8430) applies to later maps
+	lastEvent string // the latest drive-level failure, for the UI
+
+	info chan []byte // latest VDISK_INFO body, for Map
+
+	stop      context.CancelFunc
+	done      chan struct{}
+	err       error // why the session ended; set before done closes
+	closeOnce sync.Once
 }
 
-// NewSession wraps an authenticated-transport connection (after the APCP greeting and TLS).
-// user and password are the one-time tokens from the KVM control channel.
+// NewSession wraps a connection that has completed the APCP greeting (and TLS). user and
+// password are the one-time tokens from the KVM control channel.
 func NewSession(conn net.Conn, user, password string) *Session {
 	return &Session{
 		conn: conn, user: user, password: password,
 		heartbeatEvery: heartbeatInterval, driveWait: driveWaitTimeout, driveRetry: driveRetryInterval,
+		drives: map[uint16]*drive{},
+		info:   make(chan []byte, 1),
+		done:   make(chan struct{}),
 	}
 }
 
-// Status reports whether the image is attached and how much the host has read.
-func (s *Session) Status() Status {
-	return Status{Mounted: s.mounted.Load(), BytesServed: s.served.Load()}
-}
-
-type message struct {
-	typ  uint16
-	body []byte // after the 10-byte header
-}
-
-type readResult struct {
-	msg message
-	err error
-}
-
-// Mount logs in, attaches image (size bytes) as a read-only CD and serves the host's reads until
-// ctx ends (eject) or the BMC releases the drive, both of which return nil. It closes the
-// connection before returning.
-func (s *Session) Mount(ctx context.Context, image io.ReaderAt, size int64) error {
-	defer func() { _ = s.conn.Close() }()
-	defer s.mounted.Store(false)
-	if size <= 0 {
-		return errors.New("the image is empty")
+// Open logs in and starts serving the BMC. Call Close when finished.
+func (s *Session) Open(ctx context.Context) error {
+	if err := s.login(ctx); err != nil {
+		_ = s.conn.Close()
+		return err
 	}
-	blocks := uint32((size + BlockSize - 1) / BlockSize)
+	runCtx, stop := context.WithCancel(context.Background())
+	s.stop = stop
+	go s.heartbeats(runCtx)
+	go s.run()
+	return nil
+}
 
-	loopCtx, stop := context.WithCancel(ctx)
-	defer stop()
-	msgs := make(chan readResult)
-	go s.readLoop(loopCtx, msgs)
-
+func (s *Session) login(ctx context.Context) error {
 	if err := s.write(login(s.user, s.password, false)); err != nil {
 		return fmt.Errorf("send login: %w", err)
 	}
-	m, err := s.await(ctx, msgs, typeLoginStatus)
-	if err != nil {
-		return fmt.Errorf("login: %w", err)
+	deadline := time.Now().Add(setupTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
 	}
-	if len(m.body) < 3 {
-		return errors.New("login: short reply")
-	}
-	if code := m.body[2]; code != 0 {
-		err := fmt.Errorf("virtual media login refused: %s", loginError(code))
-		if holder := loginHolder(m.body); holder != "" {
-			err = fmt.Errorf("%w; held by %q", err, holder)
-		}
-		return err
-	}
-
-	disk, err := s.waitForCD(ctx, msgs)
-	if err != nil {
-		return err
-	}
-	if err := s.write(mapCD(disk, blocks)); err != nil {
-		return err
-	}
-	s.mounted.Store(true)
-	log.Printf("[VMedia] Image attached as virtual CD %d (%d blocks)", disk, blocks)
-
-	go s.heartbeats(loopCtx)
-	return s.serve(ctx, msgs, disk, image, size)
-}
-
-// waitForCD asks for the drive list until a CD drive is free. After a session ends the BMC
-// reports its drives as unassigned (type 0) or disabled for a while before freeing them.
-func (s *Session) waitForCD(ctx context.Context, msgs <-chan readResult) (uint16, error) {
-	deadline := time.Now().Add(s.driveWait)
-	last := ""
+	_ = s.conn.SetReadDeadline(deadline)
+	defer func() { _ = s.conn.SetReadDeadline(time.Time{}) }()
 	for {
-		if err := s.write(getVDiskInfo()); err != nil {
-			return 0, err
-		}
-		m, err := s.await(ctx, msgs, typeVDiskInfo)
+		m, err := readMessage(s.conn)
 		if err != nil {
-			return 0, fmt.Errorf("drive info: %w", err)
+			return fmt.Errorf("login: %w", err)
 		}
-		disk, err := pickCD(m.body)
-		if err == nil {
-			return disk, nil
-		}
-		if msg := err.Error(); msg != last {
-			last = msg
-			log.Printf("[VMedia] Waiting for the BMC to free a CD drive: %v", err)
-		}
-		if time.Now().After(deadline) {
-			return 0, err
-		}
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-time.After(s.driveRetry):
-		}
-	}
-}
-
-// serve answers the BMC until eject, release or failure.
-func (s *Session) serve(ctx context.Context, msgs <-chan readResult, disk uint16, image io.ReaderAt, size int64) error {
-	eject := func() { _ = s.writeWithin(releaseDisk(disk), ejectTimeout) }
-	for {
-		var res readResult
-		select {
-		case <-ctx.Done():
-			eject()
-			log.Printf("[VMedia] Image ejected")
-			return nil
-		case res = <-msgs:
-		}
-		if res.err != nil {
-			return res.err
-		}
-		m := res.msg
 		switch m.typ {
-		case typeVDiskRead:
-			if err := s.serveRead(disk, m.body, image, size); err != nil {
-				return err
-			}
-		case typeVDiskWrite:
-			if err := s.write(clientStatus(disk, statusWriteFailed)); err != nil {
-				return err
-			}
-		case typeRequestRelease:
-			if !forDisk(m.body, disk) {
-				continue // the vendor only unmaps a drive it has mapped
-			}
-			eject()
-			log.Printf("[VMedia] BMC released the virtual CD")
-			return nil
-		case typeDeviceStatus:
-			if len(m.body) >= 6 && forDisk(m.body, disk) {
-				if code := binary.BigEndian.Uint32(m.body[2:6]); deviceFatal(code) {
-					eject()
-					return fmt.Errorf("virtual CD failed: %s", deviceError(code))
-				}
-			}
 		case typeDisconnect:
-			return s.disconnected(disk, true, m.body)
+			return s.disconnected(m.body)
+		case typeDeviceConfigOption: // the BMC's policy may arrive before the login reply
+			_ = s.dispatch(m)
+		case typeLoginStatus:
+			if len(m.body) < 3 {
+				return errors.New("login: short reply")
+			}
+			code := m.body[2]
+			if code == 0 {
+				return nil
+			}
+			err := fmt.Errorf("virtual media login refused: %s", loginError(code))
+			if holder := loginHolder(m.body); holder != "" {
+				err = fmt.Errorf("%w; held by %q", err, holder)
+			}
+			return err
 		}
 	}
 }
 
-// forDisk reports whether a message body starts with our drive's ID.
-func forDisk(body []byte, disk uint16) bool {
-	return len(body) >= 2 && binary.BigEndian.Uint16(body[0:2]) == disk
+// Done is closed when the session has ended; Err says why.
+func (s *Session) Done() <-chan struct{} { return s.done }
+
+// Err is why the session ended: nil after Close.
+func (s *Session) Err() error {
+	select {
+	case <-s.done:
+		return s.err
+	default:
+		return nil
+	}
 }
 
-// disconnected handles a BMC DISCONNECT; reason 4 is another user asking for the drive, which
-// we grant rather than hold the media hostage. mapped says whether disk was attached.
-func (s *Session) disconnected(disk uint16, mapped bool, body []byte) error {
+// Close releases every mapped drive and ends the session.
+func (s *Session) Close() error {
+	s.end(nil, true)
+	<-s.done
+	return nil
+}
+
+// end stops the session once: optionally releasing mapped drives first, then closing the
+// connection, which also stops the run loop.
+func (s *Session) end(err error, release bool) {
+	s.closeOnce.Do(func() {
+		if release {
+			for _, d := range s.mappedDrives() {
+				_ = s.writeWithin(releaseDisk(d), ejectTimeout)
+			}
+		}
+		s.mu.Lock()
+		s.drives = map[uint16]*drive{}
+		s.mu.Unlock()
+		if s.stop != nil {
+			s.stop()
+		}
+		s.err = err
+		_ = s.conn.Close()
+		close(s.done)
+	})
+}
+
+// run reads and serves BMC messages until the connection ends.
+func (s *Session) run() {
+	for {
+		m, err := readMessage(s.conn)
+		if err != nil {
+			select {
+			case <-s.done: // Close
+			default:
+				s.end(fmt.Errorf("virtual media connection lost: %w", err), false)
+			}
+			return
+		}
+		if err := s.dispatch(m); err != nil {
+			s.end(err, false)
+			return
+		}
+	}
+}
+
+func (s *Session) dispatch(m message) error {
+	switch m.typ {
+	case typeVDiskInfo:
+		select { // keep only the latest
+		case <-s.info:
+		default:
+		}
+		s.info <- m.body
+	case typeVDiskRead:
+		return s.serveRead(m.body)
+	case typeVDiskWrite:
+		return s.serveWrite(m.body)
+	case typeRequestRelease:
+		if len(m.body) >= 2 {
+			s.dropDrive(binary.BigEndian.Uint16(m.body[0:2]), "released by the BMC")
+		}
+	case typeDeviceStatus:
+		if len(m.body) >= 6 {
+			if code := binary.BigEndian.Uint32(m.body[2:6]); deviceFatal(code) {
+				s.dropDrive(binary.BigEndian.Uint16(m.body[0:2]), deviceError(code))
+			}
+		}
+	case typeDeviceConfigOption:
+		if len(m.body) >= 11 && binary.BigEndian.Uint32(m.body[2:6]) == 1 {
+			s.mu.Lock()
+			s.readOnly = m.body[10] != 0
+			s.mu.Unlock()
+			log.Printf("[VMedia] BMC set read-only mode: %v", m.body[10] != 0)
+		}
+	case typeDisconnect:
+		return s.disconnected(m.body)
+	}
+	return nil
+}
+
+// disconnected handles a BMC DISCONNECT. Reason 4 is another user asking for virtual media,
+// which we grant (releasing everything) rather than hold the media hostage.
+func (s *Session) disconnected(body []byte) error {
 	if len(body) < 3 {
 		return errors.New("BMC ended the virtual media session")
 	}
@@ -213,56 +216,15 @@ func (s *Session) disconnected(disk uint16, mapped bool, body []byte) error {
 	if reason == 4 {
 		name := ""
 		if len(body) >= 6 {
-			n := int(body[5])
-			name = string(body[6:min(len(body), 6+n)])
+			name = string(body[6:min(len(body), 6+int(body[5]))])
 		}
 		_ = s.writeWithin(preemptResponse(true), ejectTimeout)
-		if mapped {
-			_ = s.writeWithin(releaseDisk(disk), ejectTimeout)
+		for _, d := range s.mappedDrives() {
+			_ = s.writeWithin(releaseDisk(d), ejectTimeout)
 		}
 		return fmt.Errorf("virtual media taken over by %q", name)
 	}
 	return fmt.Errorf("BMC ended the virtual media session: %s", disconnectReason(reason))
-}
-
-// serveRead sends the requested blocks in packets of at most the BMC's blocking factor, then one
-// CLIENT_STATUS. Blocks past the end of the image read as zeros.
-func (s *Session) serveRead(disk uint16, body []byte, image io.ReaderAt, size int64) error {
-	if len(body) < 14 {
-		return s.write(clientStatus(disk, statusReadFailed))
-	}
-	start := binary.BigEndian.Uint32(body[2:6])
-	n := binary.BigEndian.Uint32(body[6:10])
-	factor := binary.BigEndian.Uint32(body[10:14])
-	if factor == 0 || factor > maxChunkBlocks {
-		factor = maxChunkBlocks
-	}
-	if n > maxReadBlocks || uint64(start)+uint64(n) > math.MaxUint32 {
-		log.Printf("[VMedia] Refusing a %d-block read at block %d", n, start)
-		return s.write(clientStatus(disk, statusReadFailed))
-	}
-
-	status := statusOK
-	buf := make([]byte, int(factor)*BlockSize)
-	for done := uint32(0); done < n; {
-		count := min(factor, n-done)
-		chunk := buf[:int(count)*BlockSize]
-		clear(chunk)
-		off := (int64(start) + int64(done)) * BlockSize
-		if off < size {
-			if _, err := image.ReadAt(chunk[:min(int64(len(chunk)), size-off)], off); err != nil && !errors.Is(err, io.EOF) {
-				log.Printf("[VMedia] Image read failed: %v", err)
-				status = statusReadFailed
-				break
-			}
-		}
-		if err := s.write(readData(disk, start+done, count, chunk)); err != nil {
-			return err
-		}
-		s.served.Add(int64(len(chunk)))
-		done += count
-	}
-	return s.write(clientStatus(disk, status))
 }
 
 func (s *Session) heartbeats(ctx context.Context) {
@@ -274,11 +236,15 @@ func (s *Session) heartbeats(ctx context.Context) {
 			return
 		case <-t.C:
 			if err := s.write(heartbeat()); err != nil {
-				return // the serve loop sees the broken connection
+				return // the run loop sees the broken connection
 			}
 		}
 	}
 }
+
+// USBReset re-enumerates the BMC's USB devices on the host. Mapped drives, keyboard and mouse
+// all disconnect briefly. The BMC does not reply.
+func (s *Session) USBReset() error { return s.write(usbReset()) }
 
 func (s *Session) write(b []byte) error { return s.writeWithin(b, writeTimeout) }
 
@@ -290,19 +256,9 @@ func (s *Session) writeWithin(b []byte, timeout time.Duration) error {
 	return err
 }
 
-// readLoop is the only reader. It stops when ctx ends; Mount's deferred Close unblocks it.
-func (s *Session) readLoop(ctx context.Context, out chan<- readResult) {
-	for {
-		m, err := readMessage(s.conn)
-		select {
-		case out <- readResult{m, err}:
-		case <-ctx.Done():
-			return
-		}
-		if err != nil {
-			return
-		}
-	}
+type message struct {
+	typ  uint16
+	body []byte // after the 10-byte header
 }
 
 func readMessage(r io.Reader) (message, error) {
@@ -324,47 +280,6 @@ func readMessage(r io.Reader) (message, error) {
 	return message{typ: binary.BigEndian.Uint16(hdr[8:10]), body: body}, nil
 }
 
-// await waits for a message of type want during setup, ignoring others.
-func (s *Session) await(ctx context.Context, msgs <-chan readResult, want uint16) (message, error) {
-	timeout := time.After(setupTimeout)
-	for {
-		select {
-		case <-ctx.Done():
-			return message{}, ctx.Err()
-		case <-timeout:
-			return message{}, errors.New("BMC did not answer")
-		case res := <-msgs:
-			if res.err != nil {
-				return message{}, res.err
-			}
-			if res.msg.typ == want {
-				return res.msg, nil
-			}
-			if res.msg.typ == typeDisconnect {
-				return message{}, s.disconnected(0, false, res.msg.body)
-			}
-		}
-	}
-}
-
-// pickCD returns the first idle CD drive from a VDISK_INFO body, as the vendor client does.
-func pickCD(body []byte) (uint16, error) {
-	if len(body) < 4 {
-		return 0, errors.New("short drive info")
-	}
-	n := int(binary.BigEndian.Uint16(body[2:4]))
-	var seen []string
-	for i := 0; i < n && 4+4*i+2 <= len(body); i++ {
-		typ, status := body[4+4*i], body[5+4*i]
-		if typ == driveTypeCD && status == driveIdle {
-			return uint16(i), nil
-		}
-		seen = append(seen, fmt.Sprintf("type %d status %d", typ, status))
-	}
-	return 0, fmt.Errorf("no free virtual CD drive on the BMC (drives: %s); check that virtual media is attached "+
-		"(not detached) in the BMC settings and that no other virtual media session is open", strings.Join(seen, ", "))
-}
-
 func loginError(code byte) string {
 	msgs := map[byte]string{
 		1: "bad user", 2: "bad password", 3: "access denied", 4: "drive in use", 5: "channel not found",
@@ -384,25 +299,6 @@ func loginHolder(body []byte) string {
 	}
 	n := min(int(body[4]), len(body)-5)
 	return strings.TrimRight(string(body[5:5+n]), "\x00")
-}
-
-func deviceFatal(code uint32) bool {
-	switch code {
-	case 2, 4, 5, 6, 8, 0xFFFFFFFF:
-		return true
-	}
-	return false
-}
-
-func deviceError(code uint32) string {
-	msgs := map[uint32]string{
-		1: "command unsupported", 2: "read failed", 3: "write failed", 4: "USB not connected",
-		5: "drive already attached", 6: "drive disabled", 7: "unknown option", 8: "VDISK request failed",
-	}
-	if m, ok := msgs[code]; ok {
-		return m
-	}
-	return fmt.Sprintf("status %d", int32(code))
 }
 
 func disconnectReason(r byte) string {

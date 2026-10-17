@@ -21,7 +21,7 @@ The protocols were reverse-engineered from the vendors' JARs. Nothing from those
 | Mouse | Works | Implemented (incl. AES variant), not yet confirmed on hardware |
 | Macros (Ctrl+Alt+Del, F-keys…) | Works | Implemented |
 | Power control | Works | Status verified; commands over the KVM socket or `ipmi.cgi` |
-| Virtual media | **Stub**: upload is saved locally, nothing reaches the BMC | **Stub** |
+| Virtual media | Works: ISO on CD/DVD (booted an installer), IMG on removable or floppy (read-write), Create Image, transfer graph, USB reset | Not implemented |
 
 ## Quick start
 
@@ -70,6 +70,6 @@ docs/                  Hardware inventory, protocol specs, per-vendor deep dives
 ## Known issues
 
 - **The local console has no authentication or Origin checks.** Any web page open in the same browser can POST to `127.0.0.1:8080/api/power` as a no-CORS `text/plain` request, or open the `/ws` socket and type into the console. Treat it as unsafe while browsing elsewhere until this is fixed.
-- Supermicro video, Supermicro keyboard, and virtual media: see the status table.
+- Supermicro mouse and Supermicro virtual media: see the status table.
 - Video frames are dropped when the browser falls behind; a dropped ASPEED delta tile leaves stale pixels until the next full frame.
 - `--port` is accepted for compatibility but ignored.

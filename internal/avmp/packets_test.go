@@ -39,6 +39,10 @@ func TestEncoders(t *testing.T) {
 		{"map CD of 300 blocks", mapCD(1, 300), append(header(0x0210, 44), h("0001"+"00000800"+"0000012c"+"01"+"ff"+"0014"+
 			"00120101"+"001401000000000000"+"14aa00001176e0")...)},
 		{"map CD of 10 blocks", mapCD(0, 10)[20:22], []byte{0x01, 0x0a}},
+		// The spec's worked example: 1.44 MB image on drive 2, writable.
+		{"map floppy", mapDisk(2, 512, 2880, false, 80, 2, 18), h("41564d50" + "0000001a" + "0211" + "0002" + "00000200" + "00000b40" + "00" + "ff" + "0050" + "02" + "12")},
+		{"map removable read-only", mapDisk(1, 512, 100, true, 1, 16, 63)[20:22], []byte{0x01, 100}},
+		{"USB reset", usbReset(), h("41564d50" + "0000000c" + "0420" + "ffff")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

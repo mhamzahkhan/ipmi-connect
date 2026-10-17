@@ -7,11 +7,13 @@ const (
 	typeLogin           uint16 = 0x0100
 	typePreemptResponse uint16 = 0x0120
 	typeGetVDiskInfo    uint16 = 0x0200
-	typeMapCD           uint16 = 0x0210 // VDISK_REQUEST
+	typeMapCD           uint16 = 0x0210 // VDISK_REQUEST: CD with a TOC
+	typeMapDisk         uint16 = 0x0211 // VDISK_REQUEST2: floppy or removable, with geometry
 	typeRelease         uint16 = 0x0220 // VDISK_RELEASE: unmap / eject
 	typeReadData        uint16 = 0x0300
 	typeHeartbeat       uint16 = 0x0400
 	typeClientStatus    uint16 = 0x0410
+	typeUSBReset        uint16 = 0x0420
 
 	typeLoginStatus    uint16 = 0x8100
 	typeDisconnect     uint16 = 0x8110
@@ -20,20 +22,20 @@ const (
 	typeVDiskRead      uint16 = 0x8300
 	typeVDiskWrite     uint16 = 0x8310
 	typeDeviceStatus   uint16 = 0x8410
+	// typeDeviceConfigOption carries a BMC policy; option 1 (READ_ONLY) forces later maps read-only.
+	typeDeviceConfigOption uint16 = 0x8430
 )
 
 const (
 	headerLen = 10 // "AVMP", u32 total length (header included), u16 type
 
-	// BlockSize is a CD-ROM sector.
-	BlockSize = 2048
+	cdBlockSize  = 2048 // CD-ROM sector
+	imgBlockSize = 512  // floppy and removable images
 
-	allDrives   = 0xFFFF
-	loginLen    = 153
-	userField   = 96
-	passField   = 32
-	driveTypeCD = 2
-	driveIdle   = 0
+	allDrives = 0xFFFF
+	loginLen  = 153
+	userField = 96
+	passField = 32
 )
 
 // CLIENT_STATUS values.
@@ -104,7 +106,7 @@ func preemptResponse(accept bool) []byte {
 func mapCD(disk uint16, blocks uint32) []byte {
 	b := packet(typeMapCD, 14+len(cdTOC))
 	binary.BigEndian.PutUint16(b[10:12], disk)
-	binary.BigEndian.PutUint32(b[12:16], BlockSize)
+	binary.BigEndian.PutUint32(b[12:16], cdBlockSize)
 	binary.BigEndian.PutUint32(b[16:20], blocks)
 	b[20] = 1 // read-only
 	b[21] = byte(min(blocks, 0xFF))
@@ -121,3 +123,22 @@ func readData(disk uint16, start, n uint32, data []byte) []byte {
 	copy(b[20:], data)
 	return b
 }
+
+// mapDisk asks the BMC to attach a floppy or removable disk with the given geometry.
+func mapDisk(disk uint16, blockSize, blocks uint32, readOnly bool, cyl uint16, heads, sectors byte) []byte {
+	b := packet(typeMapDisk, 16)
+	binary.BigEndian.PutUint16(b[10:12], disk)
+	binary.BigEndian.PutUint32(b[12:16], blockSize)
+	binary.BigEndian.PutUint32(b[16:20], blocks)
+	if readOnly {
+		b[20] = 1
+	}
+	b[21] = byte(min(blocks, 0xFF))
+	binary.BigEndian.PutUint16(b[22:24], cyl)
+	b[24], b[25] = heads, sectors
+	return b
+}
+
+// usbReset re-enumerates the BMC's USB devices (virtual media, keyboard and mouse). The BMC
+// sends no reply.
+func usbReset() []byte { return diskPacket(typeUSBReset, allDrives) }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ipmi-connect/internal/bmc"
+	"ipmi-connect/internal/vmedia"
 )
 
 // defaultKVMPort is used for both channels until viewer.jnlp says otherwise.
@@ -64,17 +65,16 @@ type Client struct {
 	videoWriteMu          sync.Mutex // serialises writes on VideoConn
 	loggingOut            atomic.Bool
 
-	vmCreds chan []byte // 0x8434 payloads, handed from the control reader to MountISO
-	mediaMu sync.Mutex  // guards media and mediaErr
-	media   *mediaMount
-	// mediaErr is why the last mount ended, if it failed; shown until the next mount.
-	mediaErr string
+	vmCreds chan []byte // 0x8434 payloads, handed from the control reader to openVMedia
+
+	// Manager provides virtual media (bmc.VirtualMedia) over AVMP sessions that openVMedia opens.
+	*vmedia.Manager
 }
 
 // NewClient creates a new Dell BMC client.
 func NewClient(host, user, pass string) *Client {
 	httpClient := bmc.NewLegacyHTTPClient(httpTimeout)
-	return &Client{
+	c := &Client{
 		Host:         host,
 		User:         user,
 		Password:     pass,
@@ -84,6 +84,8 @@ func NewClient(host, user, pass string) *Client {
 		ClientRandom: uint32(time.Now().UnixNano() & 0x7FFFFFFF),
 		vmCreds:      make(chan []byte, 1),
 	}
+	c.Manager = vmedia.NewManager(c.openVMedia)
+	return c
 }
 
 // Close closes any open control and video connections and stops the heartbeat.
