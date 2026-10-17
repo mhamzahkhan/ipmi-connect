@@ -25,6 +25,11 @@
   --font-mono: 'JetBrains Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+/* The hidden attribute must win over component display rules (e.g. .btn's flex). */
+[hidden] {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -451,12 +456,111 @@ body {
   justify-content: space-between;
 }
 
+.picker-backdrop {
+  z-index: 110; /* above the media panel */
+}
+
+.modal-picker {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.picker-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.picker-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* overflow trims the start, keeping the end of long paths visible */
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.picker-path span {
+  direction: ltr;
+  unicode-bidi: embed;
+}
+
+.picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  height: min(360px, 50vh);
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.picker-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.picker-list li:hover,
+.picker-list li:focus {
+  background: var(--bg-tertiary);
+  outline: none;
+}
+
+.picker-list li.dir .picker-name {
+  color: var(--accent);
+}
+
+.picker-list li.empty {
+  color: var(--text-muted);
+  font-style: italic;
+  cursor: default;
+}
+
+.picker-size {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+#pickerName {
+  flex: 1;
+}
+
+.stat-media {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.stat-media.active {
+  color: var(--accent);
+}
+
+.stat-media::after {
+  content: "  •";
+  white-space: pre;
+  color: var(--text-muted);
+}
+
 .stat-notice {
   color: var(--warning);
   font-weight: 600;
 }
 
+.macro-stats > span {
+  white-space: nowrap; /* readouts stay on one line; the macro buttons give way instead */
+}
+
 .macro-stats {
+  flex-shrink: 0;
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: 11px;

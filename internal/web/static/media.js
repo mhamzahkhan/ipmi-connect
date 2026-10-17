@@ -1,10 +1,11 @@
 // Virtual media panel: image library, drives, transfer graph and USB reset.
 // Everything from the server is inserted with textContent, never as HTML.
+import { createPicker } from '/picker.js';
 
 const TARGET_NAMES = { cd: 'CD/DVD', removable: 'Removable', floppy: 'Floppy' };
 const TARGETS = ['cd', 'removable', 'floppy'];
 const POLL_OPEN_MS = 1000;   // while the panel is open: the graph is live
-const POLL_CLOSED_MS = 3000; // otherwise: just the toolbar badge
+const POLL_CLOSED_MS = 3000; // otherwise: just the toolbar badge (1 s while a drive is mapped)
 
 export function formatBytes(n) {
   if (n < 1024) return `${n} B`;
@@ -31,6 +32,8 @@ export function setupMedia(apiFetch) {
   const errorLine = document.getElementById('mediaError');
   const rates = document.getElementById('mediaRates');
   const graph = document.getElementById('mediaGraph');
+  const statMedia = document.getElementById('statMedia');
+  const pick = createPicker(apiFetch);
   let status = null;
   let busy = false; // an action is in flight: keep its message until it answers
   let timer = null;
@@ -154,11 +157,22 @@ export function setupMedia(apiFetch) {
       el('span', { className: 'write', textContent: `write ${formatBytes(last.written)}/s` }));
   }
 
+  // showRate puts a small live bandwidth readout in the stats bar while any drive is mapped.
+  function showRate(st, mapped) {
+    statMedia.hidden = mapped === 0;
+    if (mapped === 0) return;
+    const last = (st.history || [])[st.history.length - 1] || { read: 0, written: 0 };
+    statMedia.textContent = `VM ↓ ${formatBytes(last.read)}/s ↑ ${formatBytes(last.written)}/s`;
+    statMedia.classList.toggle('active', last.read + last.written > 0);
+  }
+
   function render(st) {
     status = st;
     const mapped = st.drives.filter((d) => !d.mounting).length;
     badge.textContent = String(mapped);
     badge.hidden = mapped === 0;
+    showRate(st, mapped);
+    if (mapped > 0 !== fastPoll) schedule();
     if (!modal.classList.contains('open')) return;
 
     // Rebuild the image rows only when they would change: rebuilding every poll would close an
@@ -186,14 +200,19 @@ export function setupMedia(apiFetch) {
     }
   }
 
+  let fastPoll = false;
+
   function stop() {
     clearInterval(timer);
     timer = null;
   }
 
+  // Poll every second while the panel is open or a drive is mapped (the stats bar shows the
+  // rate); otherwise every few seconds.
   function schedule() {
     stop();
-    timer = setInterval(poll, modal.classList.contains('open') ? POLL_OPEN_MS : POLL_CLOSED_MS);
+    fastPoll = Boolean(status && status.drives.some((d) => !d.mounting));
+    timer = setInterval(poll, modal.classList.contains('open') || fastPoll ? POLL_OPEN_MS : POLL_CLOSED_MS);
   }
 
   function open() {
@@ -222,10 +241,25 @@ export function setupMedia(apiFetch) {
   const createForm = document.getElementById('mediaCreateForm');
   const sizeSelect = document.getElementById('mediaCreateSize');
   const folderInput = document.getElementById('mediaCreateFolder');
+  const browseFolder = document.getElementById('btnBrowseFolder');
   createForm.addEventListener('change', () => {
     const fromFolder = createForm.elements.createKind.value === 'folder';
     sizeSelect.hidden = fromFolder;
     folderInput.hidden = !fromFolder;
+    browseFolder.hidden = !fromFolder;
+  });
+  document.getElementById('btnBrowseImage').addEventListener('click', async () => {
+    const path = await pick('file', 'Choose an image (.iso or .img)');
+    if (path) document.getElementById('mediaPath').value = path;
+  });
+  browseFolder.addEventListener('click', async () => {
+    const path = await pick('dir', 'Choose the folder to copy into the image');
+    if (path) folderInput.value = path;
+  });
+  document.getElementById('btnBrowseSave').addEventListener('click', async () => {
+    const label = document.getElementById('mediaCreateLabel').value.trim().toLowerCase();
+    const path = await pick('save', 'Where should the new image go?', `${label || 'rescue'}.img`);
+    if (path) document.getElementById('mediaCreatePath').value = path;
   });
   createForm.addEventListener('submit', (e) => {
     e.preventDefault();

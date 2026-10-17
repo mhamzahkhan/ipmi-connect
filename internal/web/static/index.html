@@ -100,6 +100,7 @@
 
       <div class="macro-stats" id="streamStats">
         <span class="stat-notice" id="statNotice" hidden></span>
+        <span class="stat-media" id="statMedia" title="Virtual media transfer (read from / written to your images)" hidden></span>
         <span id="statRes">Resolution: -- x --</span>
         <span class="stat-sep">•</span>
         <span id="statFPS">FPS: 0</span>
@@ -133,6 +134,7 @@
         <div class="modal-body media-body">
           <form class="media-add" id="mediaAddForm">
             <input type="text" class="media-input" id="mediaPath" placeholder="/full/path/to/image.iso or .img" spellcheck="false" autocomplete="off">
+            <button type="button" class="btn btn-secondary" id="btnBrowseImage">Browse…</button>
             <label class="media-check"><input type="checkbox" id="mediaAddReadOnly"> Read-only</label>
             <button type="submit" class="btn btn-secondary">Add Image</button>
           </form>
@@ -153,9 +155,11 @@
                   <option value="17179869184">16 GiB</option>
                 </select>
                 <input type="text" class="media-input" id="mediaCreateFolder" placeholder="/full/path/to/folder" spellcheck="false" autocomplete="off" hidden>
+                <button type="button" class="btn btn-secondary" id="btnBrowseFolder" hidden>Browse…</button>
               </div>
               <div class="media-create-row">
                 <input type="text" class="media-input" id="mediaCreatePath" placeholder="/full/path/to/new-image.img" spellcheck="false" autocomplete="off">
+                <button type="button" class="btn btn-secondary" id="btnBrowseSave">Browse…</button>
                 <input type="text" class="media-input media-label" id="mediaCreateLabel" placeholder="LABEL" maxlength="11" spellcheck="false" autocomplete="off">
                 <button type="submit" class="btn btn-secondary">Create</button>
               </div>
@@ -182,6 +186,29 @@
         <div class="modal-footer media-footer">
           <button class="btn btn-secondary" id="btnUsbReset" title="Re-enumerate the BMC's USB devices on the host (virtual media, keyboard and mouse)">USB Reset</button>
           <button class="btn btn-secondary" id="btnMediaDone">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop picker-backdrop" id="pickerModal">
+      <div class="modal-card modal-picker">
+        <div class="modal-header">
+          <div class="modal-title"><h3 id="pickerTitle">Choose an image</h3></div>
+          <button class="btn-close" id="btnClosePicker">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="picker-bar">
+            <button class="btn btn-secondary" id="pickerUp" title="Parent folder">↑</button>
+            <button class="btn btn-secondary" id="pickerHome" title="Home folder">Home</button>
+            <span class="picker-path" id="pickerPath"></span>
+          </div>
+          <ul class="picker-list" id="pickerList"></ul>
+          <p class="media-error" id="pickerError" hidden></p>
+        </div>
+        <div class="modal-footer">
+          <input type="text" class="media-input" id="pickerName" placeholder="new-image.img" spellcheck="false" autocomplete="off" hidden>
+          <button class="btn btn-secondary" id="pickerCancel">Cancel</button>
+          <button class="btn btn-secondary" id="pickerChoose" hidden>Use This Folder</button>
         </div>
       </div>
     </div>

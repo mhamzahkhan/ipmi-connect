@@ -181,3 +181,5 @@ func TestCreateImageAPI(t *testing.T) {
 		t.Errorf("overwrite: HTTP %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func newRecorder() *httptest.ResponseRecorder { return httptest.NewRecorder() }

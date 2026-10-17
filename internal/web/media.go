@@ -12,6 +12,7 @@ import (
 // mediaRoutes registers the virtual media API. Paths name files on this machine; the server
 // and the browser belong to the same user, behind the session token.
 func (s *Server) mediaRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/files", s.handleFiles)
 	mux.HandleFunc("GET /api/media", s.media(func(vm bmc.VirtualMedia, r *http.Request) error { return nil }))
 	mux.HandleFunc("POST /api/media/images", s.mediaJSON(func(vm bmc.VirtualMedia, r *http.Request) error {
 		var req struct {
