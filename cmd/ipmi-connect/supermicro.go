@@ -18,9 +18,11 @@ const (
 )
 
 // runSupermicro logs in and starts the RFB connection and stream in the background.
-func runSupermicro(ctx context.Context, server *web.Server, host, user, password string) {
+// It returns the function that ends the BMC session.
+func runSupermicro(ctx context.Context, server *web.Server, host, user, password string) (logout func()) {
 	client := supermicro.NewClient(host, user, password)
-	server.SMClient = client
+	console := supermicro.NewConsole(client)
+	server.Console = console
 
 	server.StateMu.Lock()
 	server.State.Model = "Supermicro X7SB3 (WPCM450)"
@@ -38,9 +40,7 @@ func runSupermicro(ctx context.Context, server *web.Server, host, user, password
 			log.Printf("[Supermicro] RFB connection error: %v", err)
 			return
 		}
-		server.ConnMu.Lock()
-		server.ActiveConn = conn
-		server.ConnMu.Unlock()
+		console.AttachRFB(conn)
 
 		server.StateMu.Lock()
 		server.State.ScreenWidth = client.ScreenWidth
@@ -49,6 +49,7 @@ func runSupermicro(ctx context.Context, server *web.Server, host, user, password
 
 		streamSupermicroVideo(ctx, server, conn, client.ScreenWidth, client.ScreenHeight)
 	}()
+	return client.Logout
 }
 
 // streamSupermicroVideo polls for RFB framebuffer updates.

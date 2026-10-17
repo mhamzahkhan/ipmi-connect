@@ -11,13 +11,10 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"ipmi-connect/internal/bmc"
 	"ipmi-connect/internal/web"
 )
-
-const shutdownTimeout = 3 * time.Second
 
 func main() {
 	opts := parseArgs(os.Args[1:])
@@ -48,38 +45,34 @@ func main() {
 		StatusText:   "Connecting...",
 	})
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	go logoutOnSignal(ctx, server)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
+	var logout func()
 	switch targetType {
 	case bmc.TargetDell:
-		runDell(ctx, server, opts.Host, user, password)
+		logout = runDell(ctx, server, opts.Host, user, password)
 	case bmc.TargetSupermicro:
-		runSupermicro(ctx, server, opts.Host, user, password)
+		logout = runSupermicro(ctx, server, opts.Host, user, password)
 	default:
 		log.Fatalf("Unknown or unsupported target type: %s", targetType)
 	}
+	// The Dell allows a single GUI session: whatever happens from here, log out on the way out.
+	defer logout()
 
-	if err := server.Start(!opts.NoBrowser); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatalf("Server error: %v", err)
+	if ctx.Err() != nil {
+		log.Printf("[Signal] Interrupted during setup, cleaning up BMC session...")
+		return
 	}
-}
 
-// logoutOnSignal releases the BMC session on shutdown. The Dell allows only one GUI
-// session, so exiting without logging out locks out the next login.
-func logoutOnSignal(ctx context.Context, server *web.Server) {
-	<-ctx.Done()
-	log.Printf("\n[Signal] Caught shutdown signal, cleaning up BMC session...")
-	if server.DellClient != nil {
-		server.DellClient.Logout()
-	}
-	if server.SMClient != nil {
-		server.SMClient.Logout()
-	}
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer shutdownCancel()
-	if server.HTTPServer != nil {
-		_ = server.HTTPServer.Shutdown(shutdownCtx)
+	// After the first Ctrl+C, restore default handling so a second one exits immediately.
+	go func() {
+		<-ctx.Done()
+		log.Printf("[Signal] Caught shutdown signal, cleaning up BMC session...")
+		stop()
+	}()
+
+	if err := server.Run(ctx, !opts.NoBrowser); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("Server error: %v", err)
 	}
 }

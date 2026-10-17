@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-
-	"ipmi-connect/internal/supermicro"
 )
 
 // handleWS manages the live WebSocket connection with the browser.
@@ -51,70 +49,29 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	s.LastFrameMu.RUnlock()
 
-	// If Dell BMC is connected, immediately request a full frame refresh so the new
-	// client receives a complete screen render right away.
-	if s.DellClient != nil {
-		_ = s.DellClient.RequestFrameRefresh()
+	if s.Console == nil {
+		// Drain until the browser goes away; input has nowhere to go yet.
+		for {
+			if _, _, err := ws.ReadMessage(); err != nil {
+				return
+			}
+		}
 	}
 
-	// Inbound message loop (keyboard/mouse/macros from browser)
+	// Ask for a complete frame so this browser can render without waiting for screen changes.
+	if err := s.Console.RequestFrameRefresh(); err != nil {
+		log.Printf("[WS] Refresh for new client: %v", err)
+	}
+
+	input := newInputState(s.Console)
+	defer input.releaseAll() // a closed tab must not leave keys or buttons held on the host
 	for {
 		op, data, err := ws.ReadMessage()
 		if err != nil {
-			break
+			return
 		}
-
 		if op == OpText {
-			var evt map[string]interface{}
-			if err := json.Unmarshal(data, &evt); err == nil {
-				s.handleClientInput(evt)
-			}
-		}
-	}
-}
-
-// handleClientInput processes user input and forwards it to the active BMC socket.
-func (s *Server) handleClientInput(evt map[string]interface{}) {
-	evtType, _ := evt["type"].(string)
-
-	switch evtType {
-	case "pointer":
-		mask, _ := evt["mask"].(float64)
-		x, _ := evt["x"].(float64)
-		y, _ := evt["y"].(float64)
-
-		if s.DellClient != nil {
-			_ = s.DellClient.SendPointerEvent(byte(mask), uint16(x), uint16(y))
-		} else if s.SMClient != nil {
-			s.ConnMu.Lock()
-			if s.ActiveConn != nil {
-				_ = supermicro.SendPointerEvent(s.ActiveConn, byte(mask), uint16(x), uint16(y))
-			}
-			s.ConnMu.Unlock()
-		}
-
-	case "key":
-		down, _ := evt["down"].(bool)
-		hidCode, hasHID := evt["hidCode"].(float64)
-
-		if s.DellClient != nil && hasHID && hidCode > 0 {
-			_ = s.DellClient.SendKeyEvent(down, uint16(hidCode))
-		} else if s.SMClient != nil {
-			keyCode, _ := evt["keyCode"].(float64)
-			s.ConnMu.Lock()
-			if s.ActiveConn != nil {
-				_ = supermicro.SendKeyEvent(s.ActiveConn, down, uint32(keyCode))
-			}
-			s.ConnMu.Unlock()
-		}
-
-	case "macro":
-		macroName, _ := evt["name"].(string)
-		s.executeMacro(macroName)
-
-	case "refresh":
-		if s.DellClient != nil {
-			_ = s.DellClient.RequestFrameRefresh()
+			input.handle(data)
 		}
 	}
 }

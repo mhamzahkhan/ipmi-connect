@@ -35,12 +35,11 @@ func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[Server] Received chassis power action: %s", req.Action)
 
-	var err error
-	if s.SMClient != nil {
-		err = s.SMClient.PowerControl(req.Action)
-	} else if s.DellClient != nil {
-		err = s.DellClient.PowerControl(req.Action)
+	if s.Console == nil {
+		http.Error(w, "BMC console not connected", http.StatusServiceUnavailable)
+		return
 	}
+	err := s.Console.PowerControl(req.Action)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {

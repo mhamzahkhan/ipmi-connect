@@ -1,7 +1,9 @@
 package web
 
 import (
+	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,8 +17,6 @@ import (
 	"time"
 
 	"ipmi-connect/internal/bmc"
-	"ipmi-connect/internal/dell"
-	"ipmi-connect/internal/supermicro"
 )
 
 func init() {
@@ -30,10 +30,7 @@ var staticFS embed.FS
 type Server struct {
 	State         bmc.SessionState
 	StateMu       sync.RWMutex
-	DellClient    *dell.Client
-	SMClient      *supermicro.Client
-	ActiveConn    net.Conn
-	ConnMu        sync.Mutex
+	Console       bmc.Console // set once before Start; nil until the BMC is connected
 	WSConns       map[*WSConn]bool
 	WSMu          sync.Mutex
 	Port          int
@@ -73,8 +70,8 @@ func (s *Server) routes() (http.Handler, error) {
 	return mux, nil
 }
 
-// Start launches the HTTP server and opens the browser.
-func (s *Server) Start(openBrowser bool) error {
+// Run serves the console until ctx is cancelled, then shuts the HTTP server down.
+func (s *Server) Run(ctx context.Context, openBrowser bool) error {
 	mux, err := s.routes()
 	if err != nil {
 		return err
@@ -111,8 +108,24 @@ func (s *Server) Start(openBrowser bool) error {
 	// Start background frame distributor
 	go s.frameBroadcaster()
 
-	return s.HTTPServer.Serve(listener)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- s.HTTPServer.Serve(listener) }()
+
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := s.HTTPServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
+
+// shutdownTimeout bounds how long Run waits for in-flight HTTP requests on exit.
+const shutdownTimeout = 3 * time.Second
 
 // launchBrowser opens the URL in the system's default web browser.
 func (s *Server) launchBrowser(url string) {

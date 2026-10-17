@@ -36,7 +36,7 @@ func seq(parts ...[]keyEvent) []keyEvent {
 	return out
 }
 
-// Expected sequences are what executeMacro sent before macros became table-driven.
+// Expected sequences are what executeMacro sent to the Dell before macros became table-driven.
 func TestMacroTablesReplayOriginalSequences(t *testing.T) {
 	const tap = 50 * time.Millisecond
 	tests := []struct {
@@ -56,16 +56,9 @@ func TestMacroTablesReplayOriginalSequences(t *testing.T) {
 		{"dell", "alt_tab", seq(press(226, 43), release(43, 226)), tap},
 		{"dell", "alt_f4", seq(press(226, 61), release(61, 226)), tap},
 		{"dell", "print_screen", seq(press(70), release(70)), tap},
-		{"supermicro", "cad", seq(press(0xffe3, 0xffe9, 0xffff), release(0xffff, 0xffe9, 0xffe3)), tap},
-		{"supermicro", "f1", seq(press(0xffbe), release(0xffbe)), tap},
-		{"supermicro", "f2", seq(press(0xffbf), release(0xffbf)), tap},
-		{"supermicro", "f10", seq(press(0xffc7), release(0xffc7)), tap},
-		{"supermicro", "f11", seq(press(0xffc8), release(0xffc8)), tap},
-		{"supermicro", "f12", seq(press(0xffc9), release(0xffc9)), tap},
-		{"supermicro", "esc", seq(press(0xff1b), release(0xff1b)), tap},
 	}
 
-	tables := map[string]map[string]keyMacro{"dell": dellMacros, "supermicro": supermicroMacros}
+	tables := map[string]map[string]keyMacro{"dell": macros}
 	for _, tt := range tests {
 		t.Run(tt.table+"/"+tt.macro, func(t *testing.T) {
 			m, ok := tables[tt.table][tt.macro]
@@ -92,7 +85,7 @@ func TestMacroTablesReplayOriginalSequences(t *testing.T) {
 		})
 	}
 
-	if got, want := len(dellMacros)+len(supermicroMacros), len(tests); got != want {
+	if got, want := len(macros), len(tests); got != want {
 		t.Errorf("tables define %d macros but %d are pinned by this test", got, want)
 	}
 }

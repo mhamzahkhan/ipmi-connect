@@ -29,9 +29,10 @@ func nextBackoff(d time.Duration) time.Duration {
 }
 
 // runDell logs in, opens both APCP channels, and starts the keepalive and video goroutines.
-func runDell(ctx context.Context, server *web.Server, host, user, password string) {
+// It returns the function that ends the BMC session.
+func runDell(ctx context.Context, server *web.Server, host, user, password string) (logout func()) {
 	client := dell.NewClient(host, user, password)
-	server.DellClient = client
+	server.Console = client
 
 	server.StateMu.Lock()
 	server.State.Model = "Dell PowerEdge C6220 II (AST2300)"
@@ -63,6 +64,7 @@ func runDell(ctx context.Context, server *web.Server, host, user, password strin
 
 	go pollDellSession(ctx, server, client)
 	go streamDellVideo(ctx, server, client)
+	return client.Logout
 }
 
 // fatalAfterLogin logs out before exiting: the BMC allows a single GUI session, and leaving it

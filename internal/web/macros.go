@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"ipmi-connect/internal/supermicro"
+	"ipmi-connect/internal/bmc"
 )
 
 // keyMacro is a chord: keys are pressed in order, held, then released in reverse order.
@@ -15,8 +15,8 @@ type keyMacro struct {
 
 const macroTapHold = 50 * time.Millisecond
 
-// dellMacros uses USB HID usage IDs, as sent in Avocent key packets.
-var dellMacros = map[string]keyMacro{
+// macros are chords of USB HID usages, which every supported console accepts.
+var macros = map[string]keyMacro{
 	"cad":          {keys: []uint32{224, 226, 76}, hold: 60 * time.Millisecond}, // LCtrl+LAlt+Delete
 	"f1":           {keys: []uint32{58}, hold: macroTapHold},
 	"f2":           {keys: []uint32{59}, hold: macroTapHold},
@@ -28,17 +28,6 @@ var dellMacros = map[string]keyMacro{
 	"alt_tab":      {keys: []uint32{226, 43}, hold: macroTapHold}, // LAlt+Tab
 	"alt_f4":       {keys: []uint32{226, 61}, hold: macroTapHold}, // LAlt+F4
 	"print_screen": {keys: []uint32{70}, hold: macroTapHold},
-}
-
-// supermicroMacros uses X11 keysyms, as sent in RFB KeyEvent messages.
-var supermicroMacros = map[string]keyMacro{
-	"cad": {keys: []uint32{0xffe3, 0xffe9, 0xffff}, hold: macroTapHold}, // Control_L+Alt_L+Delete
-	"f1":  {keys: []uint32{0xffbe}, hold: macroTapHold},
-	"f2":  {keys: []uint32{0xffbf}, hold: macroTapHold},
-	"f10": {keys: []uint32{0xffc7}, hold: macroTapHold},
-	"f11": {keys: []uint32{0xffc8}, hold: macroTapHold},
-	"f12": {keys: []uint32{0xffc9}, hold: macroTapHold},
-	"esc": {keys: []uint32{0xff1b}, hold: macroTapHold},
 }
 
 // playMacro sends every press, holds, then sends every release, even if some sends fail,
@@ -61,41 +50,15 @@ func playMacro(m keyMacro, send func(down bool, key uint32) error, sleep func(ti
 	return firstErr
 }
 
-// executeMacro sends multi-key sequences like Ctrl+Alt+Del.
-func (s *Server) executeMacro(name string) {
-	log.Printf("[Server] Executing macro key sequence: %s", name)
-
-	var (
-		m    keyMacro
-		ok   bool
-		send func(down bool, key uint32) error
-	)
-
-	switch {
-	case s.DellClient != nil:
-		m, ok = dellMacros[name]
-		send = func(down bool, key uint32) error {
-			return s.DellClient.SendKeyEvent(down, uint16(key))
-		}
-	case s.SMClient != nil:
-		s.ConnMu.Lock()
-		conn := s.ActiveConn
-		s.ConnMu.Unlock()
-		if conn == nil {
-			return
-		}
-		m, ok = supermicroMacros[name]
-		send = func(down bool, key uint32) error {
-			return supermicro.SendKeyEvent(conn, down, key)
-		}
-	default:
-		return
-	}
-
+// executeMacro plays a named macro on the console.
+func executeMacro(console bmc.Console, name string) {
+	m, ok := macros[name]
 	if !ok {
-		log.Printf("[Server] Unknown macro %q for this BMC, ignoring", name)
+		log.Printf("[Server] Unknown macro %q, ignoring", name)
 		return
 	}
+	log.Printf("[Server] Executing macro key sequence: %s", name)
+	send := func(down bool, key uint32) error { return console.SendKeyEvent(down, uint16(key)) }
 	if err := playMacro(m, send, time.Sleep); err != nil {
 		log.Printf("[Server] Macro %q: %v", name, err)
 	}
