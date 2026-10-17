@@ -203,8 +203,8 @@ func (c *Client) EnableVideo() error {
 		return bmc.FormatError("Dell EnableVideo y", err)
 	}
 
-	// 3. p()
-	if _, err := conn.Write(beefPacket(pktFrameRefresh, [8]byte{})); err != nil {
+	// 3. p(): 1:1 scaling, as the vendor viewer sends at start-up
+	if _, err := conn.Write(beefPacket(pktSetScale1to1, [8]byte{})); err != nil {
 		return bmc.FormatError("Dell EnableVideo p", err)
 	}
 
@@ -215,10 +215,10 @@ func (c *Client) EnableVideo() error {
 	return nil
 }
 
-// RequestFrameRefresh sends packet 772 (p) on the Control Channel to request a full screen refresh.
-// This keeps the AST2300 hardware video engine active even when the screen is static.
+// RequestFrameRefresh sends packet 769 (o, "ScreenRefresh") on the Control Channel to request a
+// full screen refresh. This keeps the AST2300 video engine active even when the screen is static.
 func (c *Client) RequestFrameRefresh() error {
-	return c.writeControl(beefPacket(pktFrameRefresh, [8]byte{}))
+	return c.writeControl(beefPacket(pktScreenRefresh, [8]byte{}))
 }
 
 // writeControl sends one packet on the Control Channel, serialised with all other writers.

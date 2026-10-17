@@ -82,3 +82,23 @@ func TestPowerRejectsNonPost(t *testing.T) {
 		t.Errorf("status = %d, want 405", rec.Code)
 	}
 }
+
+func TestSetScreenSizeUpdatesStatus(t *testing.T) {
+	srv := NewServer(0, bmc.SessionState{ScreenWidth: 1024, ScreenHeight: 768})
+	h, err := srv.routes()
+	if err != nil {
+		t.Fatalf("routes: %v", err)
+	}
+
+	srv.SetScreenSize(720, 400)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	var got bmc.SessionState
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ScreenWidth != 720 || got.ScreenHeight != 400 {
+		t.Errorf("status size = %dx%d, want 720x400", got.ScreenWidth, got.ScreenHeight)
+	}
+}

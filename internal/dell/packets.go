@@ -11,8 +11,9 @@ const (
 	pktControlAuth   uint16 = 258    // cb: client -> control channel, one-time JNLP credentials
 	pktKey           uint16 = 512    // e:  USB HID key press/release
 	pktPointer       uint16 = 513    // jc: absolute mouse position and buttons
-	pktSetResolution uint16 = 770    // y
-	pktFrameRefresh  uint16 = 772    // p:  forces a full-frame resend
+	pktScreenRefresh uint16 = 769    // o:  "ScreenRefresh", forces a full-frame resend
+	pktSetResolution uint16 = 770    // y:  "Set Display Area"
+	pktSetScale1to1  uint16 = 772    // p:  "SetScaleMode1to1", sent once when enabling video
 	pktEnableVideo   uint16 = 782    // fb
 	pktHeartbeat     uint16 = 0x0400 // q:  keeps the 30s control-channel watchdog quiet
 )
@@ -43,7 +44,21 @@ func beefPacket(id uint16, payload [8]byte) []byte {
 	return pkt
 }
 
-// pointerPacket encodes an absolute mouse event (jc).
+// avocentButtons converts the browser's RFB-style mask (left 1, middle 2, right 4) to the
+// order Avocent's viewer sends (left 1, right 2, middle 4). Other bits pass through.
+func avocentButtons(rfb byte) byte {
+	out := rfb &^ 0x07
+	out |= rfb & 1
+	if rfb&2 != 0 {
+		out |= 4
+	}
+	if rfb&4 != 0 {
+		out |= 2
+	}
+	return out
+}
+
+// pointerPacket encodes an absolute mouse event (jc). buttons is already in Avocent order.
 func pointerPacket(buttons byte, x, y uint16) []byte {
 	var p [8]byte
 	p[1] = buttons

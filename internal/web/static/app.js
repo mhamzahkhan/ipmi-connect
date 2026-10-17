@@ -88,13 +88,8 @@ import { KEY_TO_HID } from '/keymap.js';
         btnUnmount.disabled = true;
       }
 
-      if (data.screen_width && data.screen_height) {
-        if (canvas.width !== data.screen_width || canvas.height !== data.screen_height) {
-          canvas.width = data.screen_width;
-          canvas.height = data.screen_height;
-          statRes.textContent = `Resolution: ${data.screen_width} x ${data.screen_height}`;
-        }
-      }
+      // Canvas size is owned by the video stream: resizing a canvas clears it, so status polls
+      // must never touch it.
     } catch (e) {
       console.warn('Status poll error:', e);
     }
@@ -272,8 +267,8 @@ import { KEY_TO_HID } from '/keymap.js';
       ws.send(JSON.stringify({
         type: 'pointer',
         mask: mask,
-        x: Math.max(0, Math.min(canvas.width, canvasX)),
-        y: Math.max(0, Math.min(canvas.height, canvasY))
+        x: Math.max(0, Math.min(canvas.width - 1, canvasX)),
+        y: Math.max(0, Math.min(canvas.height - 1, canvasY))
       }));
     }
 

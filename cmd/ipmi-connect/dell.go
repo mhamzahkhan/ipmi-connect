@@ -84,15 +84,19 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 	log.Printf("[Dell] Starting live Aspeed video streaming loop...")
 
 	var frameBuf []byte
-	var lastW, lastH, lastX, lastY uint16
-	var lastMode420, lastSel, lastAdvSel byte
+	var cur dell.VideoPacket // geometry and tables of the frame being assembled
 	lastPktTime := time.Now()
+	seenSelectors := map[[2]byte]bool{}
 
 	flush := func() {
-		if len(frameBuf) > 0 {
-			srv.SendAspeedFrame(lastMode420, lastSel, lastAdvSel, lastX, lastY, lastW, lastH, frameBuf)
-			frameBuf = frameBuf[:0]
+		if len(frameBuf) == 0 {
+			return
 		}
+		// Every frame covers the whole screen from the origin. Aspeed's browser decoder takes a
+		// single table selector for luma and chroma, so it gets the luma table (the visually
+		// dominant one) and pass-2 tables stay at 0, as in the vendor viewer.
+		srv.SendAspeedFrame(cur.Mode420, cur.LumaSelector, 0, 0, 0, cur.Width, cur.Height, frameBuf)
+		frameBuf = frameBuf[:0]
 	}
 
 	for {
@@ -139,13 +143,16 @@ func streamDellVideo(ctx context.Context, srv *web.Server, client *dell.Client) 
 			// First chunk of a new frame.
 			flush()
 			frameBuf = append(frameBuf[:0], pkt.Bitstream...)
-			lastW = pkt.Width
-			lastH = pkt.Height
-			lastX = pkt.X
-			lastY = pkt.Y
-			lastMode420 = pkt.Mode420
-			lastSel = pkt.Selector
-			lastAdvSel = pkt.AdvanceSelector
+			if pkt.Width != cur.Width || pkt.Height != cur.Height {
+				log.Printf("[Dell] Host video mode is %dx%d", pkt.Width, pkt.Height)
+				srv.SetScreenSize(int(pkt.Width), int(pkt.Height))
+			}
+			if sel := [2]byte{pkt.LumaSelector, pkt.ChromaSelector}; !seenSelectors[sel] {
+				seenSelectors[sel] = true
+				log.Printf("[Dell] Video quantisation tables: luma %d, chroma %d", sel[0], sel[1])
+			}
+			cur = *pkt
+			cur.Bitstream = nil
 		} else {
 			frameBuf = append(frameBuf, pkt.Bitstream...)
 		}

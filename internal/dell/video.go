@@ -3,31 +3,40 @@ package dell
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
 	"sync/atomic"
 	"time"
 )
 
-// VideoPacket contains an Aspeed video bitstream chunk and its geometry.
+// VideoPacket is one ib packet: an ASPEED bitstream that updates the whole frame.
+//
+// Field meanings follow the C6220's own viewer (com.avocent.kvm.b.a.ib and the decoder in
+// com.avocent.kvm.a.a): the bitstream always describes the full Width x Height frame, drawn at
+// the origin; bytes 1-3 carry the hardware cursor position, not a tile offset.
 type VideoPacket struct {
-	X               uint16
-	Y               uint16
-	Width           uint16
-	Height          uint16
-	Flags           byte
-	Mode420         byte
-	Selector        byte
-	AdvanceSelector byte
-	Bitstream       []byte
+	CursorX        uint16
+	CursorY        uint16
+	Width          uint16
+	Height         uint16
+	Flags          byte // bit 0: first chunk of a frame
+	Mode420        byte // 1 = YUV420, 0 = YUV444
+	LumaSelector   byte // quantisation table for Y (high nibble of byte 11)
+	ChromaSelector byte // quantisation table for Cb/Cr (low nibble of byte 11)
+	Bitstream      []byte
 }
+
+// Video modes 2 and 3 carry hardware-cursor bitmaps rather than frame data.
+const (
+	videoModeCursorA = 2
+	videoModeCursorB = 3
+)
 
 // ReadVideoPacket reads and decodes the next video packet from the Video Channel with a 3-second timeout.
 func (c *Client) ReadVideoPacket() (*VideoPacket, error) {
 	return c.ReadVideoPacketWithTimeout(packetBodyTimeout)
 }
 
-// ReadVideoPacketWithTimeout reads and decodes the next video packet from the Video Channel
-// with a caller-specified read timeout.
+// ReadVideoPacketWithTimeout reads the next packet from the Video Channel, waiting up to timeout
+// for it to start. It returns (nil, nil) for packets that are not video frames.
 func (c *Client) ReadVideoPacketWithTimeout(timeout time.Duration) (*VideoPacket, error) {
 	c.ConnMu.Lock()
 	conn := c.VideoConn
@@ -37,78 +46,52 @@ func (c *Client) ReadVideoPacketWithTimeout(timeout time.Duration) (*VideoPacket
 		return nil, fmt.Errorf("video channel is not connected")
 	}
 
-	frameHeader := make([]byte, beefHeaderLen)
-	// Read the first byte with the caller's timeout. If no packet is arriving, this times
-	// out without consuming any bytes from the TCP stream, preventing desynchronization.
-	_ = conn.SetReadDeadline(time.Now().Add(timeout))
-	if _, err := io.ReadFull(conn, frameHeader[:1]); err != nil {
+	pkt, err := readPacket(conn, timeout)
+	if err != nil {
 		return nil, err
 	}
-
-	// Once the packet has started arriving, allow generous time to read the rest of it.
-	_ = conn.SetReadDeadline(time.Now().Add(packetBodyTimeout))
-	if _, err := io.ReadFull(conn, frameHeader[1:]); err != nil {
-		return nil, err
+	if pkt.ID != pktVideoFrame {
+		return nil, nil
 	}
 
-	magic := binary.BigEndian.Uint32(frameHeader[:4])
-	if magic != videoFrameMagic && string(frameHeader[:4]) != "BEEF" {
-		return nil, fmt.Errorf("unexpected video frame magic: 0x%08x (%s)", magic, string(frameHeader[:4]))
+	c.ackVideoPacket()
+	return parseVideoFrame(pkt.Payload), nil
+}
+
+// ackVideoPacket acknowledges one ib packet. Payload byte 0 is a batch count, always 1; a rolling
+// counter stalls the AST2300 when it wraps to 0 on the 256th packet.
+func (c *Client) ackVideoPacket() {
+	atomic.AddUint32(&c.AckCount, 1)
+	ackPkt := beefPacket(pktVideoAck, [8]byte{1})
+
+	c.ConnMu.Lock()
+	defer c.ConnMu.Unlock()
+	if c.VideoConn != nil {
+		_ = c.VideoConn.SetWriteDeadline(time.Now().Add(socketWriteTimeout))
+		_, _ = c.VideoConn.Write(ackPkt)
+	}
+}
+
+// parseVideoFrame decodes an ib payload, returning nil for cursor bitmaps and short payloads.
+func parseVideoFrame(p []byte) *VideoPacket {
+	if len(p) < videoFrameHeaderLen {
+		return nil
+	}
+	mode := p[0]
+	if mode == videoModeCursorA || mode == videoModeCursorB {
+		return nil
 	}
 
-	fID := binary.BigEndian.Uint16(frameHeader[4:6])
-	fLen := binary.BigEndian.Uint16(frameHeader[6:8])
-	if fLen < beefHeaderLen {
-		return nil, fmt.Errorf("invalid packet length: %d", fLen)
+	cursor := uint32(p[1])<<16 | uint32(p[2])<<8 | uint32(p[3])
+	return &VideoPacket{
+		CursorX:        uint16(cursor >> 12 & 0xFFF),
+		CursorY:        uint16(cursor & 0xFFF),
+		Height:         binary.BigEndian.Uint16(p[4:6]),
+		Width:          binary.BigEndian.Uint16(p[6:8]),
+		Flags:          p[8],
+		Mode420:        mode & 1,
+		LumaSelector:   p[11] >> 4,
+		ChromaSelector: p[11] & 0x0F,
+		Bitstream:      p[videoFrameHeaderLen:],
 	}
-
-	payloadLen := int(fLen) - beefHeaderLen
-	fPayload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(conn, fPayload); err != nil {
-		return nil, err
-	}
-
-	if fID == pktVideoFrame && len(fPayload) >= videoFrameHeaderLen {
-		atomic.AddUint32(&c.AckCount, 1)
-		// Payload byte 0 is a batch count, always 1. A rolling counter stalls the AST2300
-		// when it wraps to 0 on the 256th packet.
-		ackPkt := beefPacket(pktVideoAck, [8]byte{1})
-		c.ConnMu.Lock()
-		if c.VideoConn != nil {
-			_ = c.VideoConn.SetWriteDeadline(time.Now().Add(socketWriteTimeout))
-			_, _ = c.VideoConn.Write(ackPkt)
-		}
-		c.ConnMu.Unlock()
-
-		mode := fPayload[0]
-		mode420 := mode & 1
-
-		n3 := (uint32(fPayload[1]) << 16) | (uint32(fPayload[2]) << 8) | uint32(fPayload[3])
-		x := uint16((n3 >> 12) & 0xFFF)
-		y := uint16(n3 & 0xFFF)
-
-		// Note: in ib packet, byte 4..5 is height (rows) and byte 6..7 is width (columns)
-		h := binary.BigEndian.Uint16(fPayload[4:6])
-		w := binary.BigEndian.Uint16(fPayload[6:8])
-
-		flags := fPayload[8]
-		selector := fPayload[11] & 0x0F
-		advanceSelector := (fPayload[11] >> 4) & 0x0F
-
-		bitstream := fPayload[videoFrameHeaderLen:]
-
-		return &VideoPacket{
-			X:               x,
-			Y:               y,
-			Width:           w,
-			Height:          h,
-			Flags:           flags,
-			Mode420:         mode420,
-			Selector:        selector,
-			AdvanceSelector: advanceSelector,
-			Bitstream:       bitstream,
-		}, nil
-	}
-
-	return nil, nil
 }
