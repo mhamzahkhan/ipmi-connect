@@ -49,7 +49,7 @@ func TestDrainControlClosesSessionOnProtocolError(t *testing.T) {
 	defer videoPeer.Close()
 	c := &Client{CtrlConn: client, VideoConn: video}
 
-	go func() { _, _ = server.Write([]byte("JUNKJUNK")) }()
+	go func() { _, _ = server.Write([]byte("JUNK\x00\x01\x00\x02")) }() // length below header size
 	done := make(chan struct{})
 	go func() { c.drainControl(make(chan struct{})); close(done) }()
 

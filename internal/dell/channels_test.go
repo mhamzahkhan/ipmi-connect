@@ -49,6 +49,13 @@ func longPacket(id uint16, payload []byte) []byte {
 	return append(pkt, payload...)
 }
 
+// zeroMagicPacket is how the C6220 frames its video-auth reply.
+func zeroMagicPacket(id uint16, payload []byte) []byte {
+	pkt := longPacket(id, payload)
+	copy(pkt[:4], []byte{0, 0, 0, 0})
+	return pkt
+}
+
 func loginResponse(status byte, token uint32) []byte {
 	payload := make([]byte, 107)
 	payload[0] = status
@@ -124,5 +131,19 @@ func TestConnectVideoTimesOutOnSilentBMC(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("took %v; the handshake deadline was not applied", elapsed)
+	}
+}
+
+func TestConnectVideoAcceptsZeroMagicAuthReply(t *testing.T) {
+	host, port := fakeAPCP(t, func(conn net.Conn) {
+		_, _ = io.ReadFull(conn, make([]byte, shortPacketLen))
+		_, _ = conn.Write(zeroMagicPacket(pktVideoAuthResp, make([]byte, 8)))
+		time.Sleep(200 * time.Millisecond)
+	})
+	c := &Client{Host: host, VPort: port}
+	defer c.Close()
+
+	if err := c.ConnectVideo(); err != nil {
+		t.Fatalf("ConnectVideo: %v", err)
 	}
 }

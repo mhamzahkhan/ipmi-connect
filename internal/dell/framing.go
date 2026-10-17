@@ -8,7 +8,8 @@ import (
 	"time"
 )
 
-// rawPacket is one framed packet: 8-byte header (magic, u16 ID, u16 total length) plus payload.
+// rawPacket is one framed packet: 8-byte header (4-byte magic, u16 ID, u16 total length) plus
+// payload.
 type rawPacket struct {
 	ID      uint16
 	Payload []byte
@@ -30,11 +31,8 @@ func readPacket(conn net.Conn, idle time.Duration) (rawPacket, error) {
 		return rawPacket{}, interrupted(err)
 	}
 
-	magic := binary.BigEndian.Uint32(header[:4])
-	if magic != videoFrameMagic && string(header[:4]) != "BEEF" {
-		return rawPacket{}, fmt.Errorf("unexpected packet magic: 0x%08x", magic)
-	}
-
+	// The magic is not checked: the BMC uses "BEEF", 0xDEADBEEF or zeros (the video-auth reply)
+	// on received packets, and the vendor viewer only reads the ID and length.
 	length := binary.BigEndian.Uint16(header[6:8])
 	if length < beefHeaderLen {
 		return rawPacket{}, fmt.Errorf("invalid packet length: %d", length)

@@ -84,25 +84,6 @@ func TestReadVideoPacket_ValidIB(t *testing.T) {
 	}
 }
 
-func TestReadVideoPacket_InvalidMagic(t *testing.T) {
-	serverConn, clientConn := net.Pipe()
-	defer serverConn.Close()
-	defer clientConn.Close()
-
-	client := &Client{
-		VideoConn: clientConn,
-	}
-
-	go func() {
-		_, _ = serverConn.Write([]byte("NOPE1234"))
-	}()
-
-	_, err := client.ReadVideoPacketWithTimeout(500 * time.Millisecond)
-	if err == nil {
-		t.Fatal("expected error for invalid magic, got nil")
-	}
-}
-
 // frame builds an ib payload: mode, packed cursor x/y, height, width, flags, selectors, bitstream.
 func frame(mode byte, cx, cy, h, w uint16, flags, selectors byte, bitstream ...byte) []byte {
 	p := make([]byte, videoFrameHeaderLen, videoFrameHeaderLen+len(bitstream))

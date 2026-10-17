@@ -26,12 +26,25 @@ func TestReadPacketIdleTimeoutConsumesNothing(t *testing.T) {
 	}
 }
 
-func TestReadPacketRejectsBadMagicAndLength(t *testing.T) {
+// The C6220 answers video auth with a zero magic; rejecting it broke the video channel.
+func TestReadPacketAcceptsAnyMagic(t *testing.T) {
+	for _, magic := range []string{"BEEF", "\xde\xad\xbe\xef", "\x00\x00\x00\x00"} {
+		server, client := net.Pipe()
+		go func() { _, _ = server.Write([]byte(magic + "\x00\x84\x00\x0a\x00\x00")) }()
+		pkt, err := readPacket(client, time.Second)
+		if err != nil || pkt.ID != pktVideoAuthResp || len(pkt.Payload) != 2 {
+			t.Errorf("magic % x: got %+v, %v", magic, pkt, err)
+		}
+		server.Close()
+		client.Close()
+	}
+}
+
+func TestReadPacketRejectsBadLength(t *testing.T) {
 	tests := []struct {
 		name string
 		data []byte
 	}{
-		{"bad magic", []byte("NOPE\x00\x01\x00\x10")},
 		{"length shorter than header", []byte("BEEF\x00\x01\x00\x04")},
 	}
 	for _, tt := range tests {
