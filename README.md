@@ -16,9 +16,9 @@ The protocols were reverse-engineered from the vendors' JARs. Nothing from those
 | Feature | Dell | Supermicro |
 | :--- | :--- | :--- |
 | Login / clean logout | Works | Works |
-| Live video | Works (Go ASPEED decoder, verified frame-for-frame against Aspeed's reference) | Implemented (Hermon), not yet seen on hardware |
-| Keyboard | Works (USB HID) | Implemented (18-byte HID events), not yet seen on hardware |
-| Mouse | Works | Implemented (incl. AES variant), not yet seen on hardware |
+| Live video | Works (Go ASPEED decoder, verified frame-for-frame against Aspeed's reference) | Works (Go Hermon decoder) |
+| Keyboard | Works (USB HID) | Works (USB HID) |
+| Mouse | Works | Implemented (incl. AES variant), not yet confirmed on hardware |
 | Macros (Ctrl+Alt+Del, F-keys…) | Works | Implemented |
 | Power control | Works | Status verified; commands over the KVM socket or `ipmi.cgi` |
 | Virtual media | **Stub**: upload is saved locally, nothing reaches the BMC | **Stub** |

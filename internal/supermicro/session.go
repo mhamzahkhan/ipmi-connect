@@ -43,6 +43,7 @@ const (
 type Sink interface {
 	UpdateScreen(width, height int, pix []byte)
 	SetStatus(text string)
+	SetFPS(fps int)
 }
 
 // Session is one authenticated ATEN iKVM connection.
@@ -61,6 +62,7 @@ type Session struct {
 	frame    *frame
 	noSignal bool
 	status   string
+	frames   int // decoded updates since the last FPS report
 }
 
 func newSession(conn net.Conn, r *bufio.Reader, info ServerInfo) *Session {
@@ -127,7 +129,9 @@ func (s *Session) Run(ctx context.Context, sink Sink) error {
 			return fmt.Errorf("write: %w", err)
 		case <-keepAliveTick.C:
 			s.enqueue(keepAlive())
-		case <-poll.C:
+		case <-poll.C: // every second
+			sink.SetFPS(s.frames)
+			s.frames = 0
 			idle := time.Since(lastMsg)
 			switch {
 			case idle > idleDead:
@@ -247,6 +251,7 @@ func (s *Session) handleUpdate(u FramebufferUpdate, sink Sink) {
 		}
 	}
 	if changed {
+		s.frames++
 		sink.UpdateScreen(s.frame.w, s.frame.h, s.frame.pix)
 	}
 	if s.frame != nil {

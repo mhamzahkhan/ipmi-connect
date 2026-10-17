@@ -18,6 +18,19 @@ type recordingSink struct {
 	w, h     int
 	pix      []byte
 	statuses []string
+	fps      []int
+}
+
+func (s *recordingSink) SetFPS(fps int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fps = append(s.fps, fps)
+}
+
+func (s *recordingSink) fpsReports() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int(nil), s.fps...)
 }
 
 func (s *recordingSink) UpdateScreen(w, h int, pix []byte) {
@@ -120,6 +133,23 @@ func TestSessionDecodesUpdatesAndRequestsTheNext(t *testing.T) {
 	go func() { _, _ = bmc.conn.Write(hermonUpdate(32, 16, hermon(0, 0, 0, nil))) }()
 	waitFor(t, "incremental update request", func() bool {
 		return bytes.Contains(bmc.sent(), framebufferUpdateRequest(true, 32, 16))
+	})
+}
+
+func TestSessionReportsFrameRate(t *testing.T) {
+	_, bmc, sink, _ := startSession(t, ServerInfo{Video: true, KeyboardMouse: true})
+	go func() {
+		for i := 0; i < 3; i++ {
+			_, _ = bmc.conn.Write(hermonUpdate(32, 16, hermon(0, 0, 1, tile(0, 0, []byte{byte(i), 0x7C}, 256))))
+		}
+	}()
+	waitFor(t, "an FPS report counting the frames", func() bool {
+		for _, f := range sink.fpsReports() {
+			if f == 3 {
+				return true
+			}
+		}
+		return false
 	})
 }
 
