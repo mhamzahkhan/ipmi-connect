@@ -76,3 +76,7 @@ docs/                  Hardware inventory, protocol specs, per-vendor deep dives
 
 - Supermicro: while the BMC's own web-UI media mount is active, it has one free virtual media slot, so a second drive is refused with "slots are full or busy".
 - `--port` is accepted for compatibility but ignored.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The ASPEED video decoder in `internal/aspeed/` is ported from Aspeed's reference implementation and stays under the Mozilla Public License 2.0; see [internal/aspeed/LICENSE](internal/aspeed/LICENSE).
