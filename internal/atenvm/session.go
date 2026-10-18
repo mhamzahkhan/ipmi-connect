@@ -28,7 +28,7 @@ const (
 type deviceSession struct {
 	conn           net.Conn
 	drive          *vmedia.Drive
-	target         SCSITarget
+	target         *scsiTarget
 	disk           uint16
 	keepaliveEvery time.Duration
 
@@ -56,7 +56,7 @@ func newDeviceSession(conn net.Conn, drive *vmedia.Drive, disk uint16, keepalive
 		keepalive = defaultKeepalive
 	}
 	return &deviceSession{
-		conn: conn, drive: drive, target: NewTarget(drive), disk: disk,
+		conn: conn, drive: drive, target: newTarget(drive), disk: disk,
 		keepaliveEvery: keepalive, done: make(chan struct{}),
 	}
 }
@@ -192,8 +192,8 @@ func (s *deviceSession) serve(ctx context.Context) {
 	}
 }
 
-// handleCBW parses a CBW and services the command. For an OUT command it first gathers the host's
-// write data, which may span several frames with control frames interleaved.
+// handleCBW parses a CBW and services the command. Reads and writes are streamed a frame at a
+// time, so a transfer length the BMC claims never sizes an allocation.
 func (s *deviceSession) handleCBW(payload []byte) error {
 	cbw, err := ParseCBW(payload)
 	if err != nil {
@@ -202,62 +202,99 @@ func (s *deviceSession) handleCBW(payload []byte) error {
 		return nil
 	}
 	cdb := cbw.CDB[:cbw.CDBLength]
-	out := cbw.Flags&0x80 == 0 && cbw.DataLen > 0
-
-	if out {
-		// Bound the transfer before allocating: a writable drive accepts up to its image size, a
-		// read-only one only a small control transfer (MODE SELECT etc.). A larger claim is a
-		// protocol violation from an untrusted BMC, so drop the session rather than allocate it.
-		limit := int64(controlOutMax)
-		if !s.drive.ReadOnly {
-			limit = s.drive.Size()
-		}
-		if int64(cbw.DataLen) > limit {
-			return fmt.Errorf("oversized %d-byte OUT transfer (limit %d)", cbw.DataLen, limit)
-		}
-		data, err := s.readOutData(cbw.DataLen)
-		if err != nil {
-			return err
-		}
-		return s.sendCSW(cbw.Tag, cbw.DataLen, 0, s.target.WriteData(cdb, data))
+	switch {
+	case cbw.Flags&0x80 == 0 && cbw.DataLen > 0:
+		return s.handleOut(cbw, cdb)
+	case isRead(cdb):
+		return s.streamRead(cbw, cdb)
 	}
-
 	data, ok := s.target.Execute(cdb, cbw.DataLen)
 	status := CSWStatusGood
 	if !ok {
 		status = CSWStatusCommandFail
 	}
-	if len(data) > 0 {
-		if err := s.sendData(data); err != nil {
-			return err
-		}
+	if err := s.sendData(data); err != nil {
+		return err
 	}
-	residue := cbw.DataLen - uint32(len(data))
-	return s.sendCSW(cbw.Tag, cbw.DataLen, residue, status)
+	return s.sendCSW(cbw.Tag, cbw.DataLen-uint32(len(data)), status)
 }
 
-// readOutData collects dataLen bytes of host write data, answering control frames that interleave.
-func (s *deviceSession) readOutData(dataLen uint32) ([]byte, error) {
-	buf := make([]byte, 0, dataLen)
-	for uint32(len(buf)) < dataLen {
+// streamRead sends a READ's data in maxBulkChunk frames read straight from the image.
+func (s *deviceSession) streamRead(cbw CBW, cdb []byte) error {
+	off, n, ok := s.target.readRange(cdb, cbw.DataLen)
+	status := CSWStatusCommandFail
+	var sent int64
+	if ok {
+		status = CSWStatusGood
+		buf := make([]byte, min(n, maxBulkChunk))
+		for sent < n {
+			chunk := buf[:min(int64(len(buf)), n-sent)]
+			if _, err := s.drive.ReadAt(chunk, off+sent); err != nil {
+				s.target.sense.set(senseMediumError, ascUnrecoveredRead, 0)
+				status = CSWStatusCommandFail
+				break
+			}
+			if err := s.sendData(chunk); err != nil {
+				return err
+			}
+			sent += int64(len(chunk))
+		}
+	}
+	return s.sendCSW(cbw.Tag, cbw.DataLen-uint32(sent), status)
+}
+
+// handleOut takes the host's write data frame by frame, writing each straight to the image, or
+// draining it when the command is refused, then answers with one CSW.
+func (s *deviceSession) handleOut(cbw CBW, cdb []byte) error {
+	// A writable drive accepts up to its size, a read-only one only a small control transfer
+	// (MODE SELECT etc.). A larger claim is a protocol violation from an untrusted BMC, so drop the
+	// session rather than wait for data that will not fit.
+	limit := int64(controlOutMax)
+	if !s.drive.ReadOnly {
+		limit = s.drive.Size()
+	}
+	if int64(cbw.DataLen) > limit {
+		return fmt.Errorf("oversized %d-byte OUT transfer (limit %d)", cbw.DataLen, limit)
+	}
+	off, ok := s.target.writeRange(cdb, cbw.DataLen)
+	status := CSWStatusGood
+	if !ok {
+		status = CSWStatusCommandFail
+	}
+	err := s.receiveOut(cbw.DataLen, func(p []byte, at int64) {
+		if status != CSWStatusGood {
+			return // refused or failed: drain the rest
+		}
+		if _, err := s.drive.WriteAt(p, off+at); err != nil {
+			s.target.sense.set(senseMediumError, ascWriteError, 0)
+			status = CSWStatusCommandFail
+		}
+	})
+	if err != nil {
+		return err
+	}
+	return s.sendCSW(cbw.Tag, 0, status)
+}
+
+// receiveOut passes dataLen bytes of host write data to sink as the frames arrive, skipping
+// keepalives that interleave so reassembly never blocks.
+func (s *deviceSession) receiveOut(dataLen uint32, sink func(p []byte, at int64)) error {
+	for got := uint32(0); got < dataLen; {
 		h, payload, err := ReadFrame(s.conn)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		switch {
 		case h.Endpoint == EndpointBulkOut && (h.Tag == TagEnqueue || h.Tag == TagEnqueueAndGo):
-			need := dataLen - uint32(len(buf))
-			if uint32(len(payload)) > need {
-				payload = payload[:need]
-			}
-			buf = append(buf, payload...)
+			payload = payload[:min(uint32(len(payload)), dataLen-got)]
+			sink(payload, int64(got))
+			got += uint32(len(payload))
 		case h.Tag == TagPingReq || h.Tag == TagPingResp:
-			// A keepalive may interleave; skip it without writing, so reassembly never blocks.
 		default:
-			return nil, fmt.Errorf("unexpected frame (tag 0x%02x) while reading write data", h.Tag)
+			return fmt.Errorf("unexpected frame (tag 0x%02x) while reading write data", h.Tag)
 		}
 	}
-	return buf, nil
+	return nil
 }
 
 // sendData sends bulk-IN data in frames of at most maxBulkChunk bytes.
@@ -276,7 +313,7 @@ func (s *deviceSession) sendData(data []byte) error {
 	return nil
 }
 
-func (s *deviceSession) sendCSW(tag, dataLen, residue uint32, status byte) error {
+func (s *deviceSession) sendCSW(tag, residue uint32, status byte) error {
 	csw := CSW{Tag: tag, Residue: residue, Status: status}
 	h := Header{Endpoint: EndpointBulkIn, Tag: TagEnqueueAndGo, PayloadLen: CSWLength}
 	return s.writeFrame(h, csw.Encode())

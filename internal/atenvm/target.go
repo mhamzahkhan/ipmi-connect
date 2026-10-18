@@ -1,6 +1,10 @@
 package atenvm
 
-import "ipmi-connect/internal/vmedia"
+import (
+	"math"
+
+	"ipmi-connect/internal/vmedia"
+)
 
 // Sector sizes.
 const (
@@ -39,16 +43,16 @@ func (t *scsiTarget) Execute(cdb []byte, dataLen uint32) ([]byte, bool) {
 		return t.inquiry(cdb, dataLen)
 	case CmdReadCapacity10:
 		return t.readCapacity(dataLen)
-	case CmdRead10:
-		if len(cdb) < 9 {
-			return t.fail(senseIllegalRequest, ascInvalidField, 0)
+	case CmdRead10, CmdRead12:
+		off, n, ok := t.readRange(cdb, dataLen)
+		if !ok {
+			return nil, false
 		}
-		return t.readLBA(be32(cdb[2:6]), uint32(be16(cdb[7:9])), dataLen)
-	case CmdRead12:
-		if len(cdb) < 10 {
-			return t.fail(senseIllegalRequest, ascInvalidField, 0)
+		buf := make([]byte, n) // the session streams reads; this whole-buffer path serves tests
+		if _, err := t.drive.ReadAt(buf, off); err != nil {
+			return t.fail(senseMediumError, ascUnrecoveredRead, 0)
 		}
-		return t.readLBA(be32(cdb[2:6]), be32(cdb[6:10]), dataLen)
+		return buf, true
 	case CmdModeSense6:
 		return t.modeSense(cdb, dataLen, false)
 	case CmdModeSense10:
@@ -67,42 +71,19 @@ func (t *scsiTarget) Execute(cdb []byte, dataLen uint32) ([]byte, bool) {
 	return t.fail(senseIllegalRequest, ascInvalidCommand, 0)
 }
 
-// WriteData applies a host OUT transfer. Only WRITE(10)/(12) to a writable disk are honoured;
-// anything else is refused without touching the image.
+// WriteData applies a whole host OUT transfer. Only WRITE(10)/(12) to a writable disk is
+// honoured; anything else is refused without touching the image.
 func (t *scsiTarget) WriteData(cdb []byte, data []byte) byte {
-	if len(cdb) == 0 || (cdb[0] != CmdWrite10 && cdb[0] != CmdWrite12) {
-		t.sense.set(senseIllegalRequest, ascInvalidCommand, 0)
-		return CSWStatusCommandFail
-	}
-	var lba, blocks uint32
-	switch cdb[0] {
-	case CmdWrite10:
-		if len(cdb) < 9 {
-			t.sense.set(senseIllegalRequest, ascInvalidField, 0)
-			return CSWStatusCommandFail
-		}
-		lba, blocks = be32(cdb[2:6]), uint32(be16(cdb[7:9]))
-	case CmdWrite12:
-		if len(cdb) < 10 {
-			t.sense.set(senseIllegalRequest, ascInvalidField, 0)
-			return CSWStatusCommandFail
-		}
-		lba, blocks = be32(cdb[2:6]), be32(cdb[6:10])
-	}
-	d := t.drive
-	switch {
-	case d.ReadOnly:
-		t.sense.set(senseDataProtect, ascWriteProtected, 0)
-		return CSWStatusCommandFail
-	case !d.Contains(lba, blocks):
-		t.sense.set(senseIllegalRequest, ascLBAOutOfRange, 0)
-		return CSWStatusCommandFail
-	case uint64(len(data)) != uint64(blocks)*uint64(d.BlockSize):
+	if uint64(len(data)) > math.MaxUint32 {
 		t.sense.set(senseIllegalRequest, ascInvalidField, 0)
 		return CSWStatusCommandFail
 	}
-	if _, err := d.WriteAt(data, int64(lba)*int64(d.BlockSize)); err != nil {
-		t.sense.set(senseMediumError, 0x0C, 0) // write error
+	off, ok := t.writeRange(cdb, uint32(len(data)))
+	if !ok {
+		return CSWStatusCommandFail
+	}
+	if _, err := t.drive.WriteAt(data, off); err != nil {
+		t.sense.set(senseMediumError, ascWriteError, 0)
 		return CSWStatusCommandFail
 	}
 	return CSWStatusGood

@@ -45,23 +45,62 @@ type SCSITarget interface {
 	WriteData(cdb []byte, data []byte) byte
 }
 
-// readLBA validates an LBA/block count against the medium and returns the data, bounded by the
-// host transfer length. An out-of-range LBA or a read error sets sense and returns ok=false.
-func (t *scsiTarget) readLBA(lba, blocks, dataLen uint32) ([]byte, bool) {
-	if dataLen == 0 || blocks == 0 {
-		return nil, true // nothing to transfer
+// readRange decodes a READ(10)/(12) into the byte range to send, bounded by the host transfer
+// length. A short CDB or an out-of-range LBA sets sense and returns ok=false.
+func (t *scsiTarget) readRange(cdb []byte, dataLen uint32) (off, n int64, ok bool) {
+	lba, blocks, ok := t.blockRange(cdb)
+	if !ok {
+		return 0, 0, false
 	}
-	d := t.drive
-	if !d.Contains(lba, blocks) {
-		return t.fail(senseIllegalRequest, ascLBAOutOfRange, 0)
+	if !t.drive.Contains(lba, blocks) {
+		t.sense.set(senseIllegalRequest, ascLBAOutOfRange, 0)
+		return 0, 0, false
 	}
 	// The host may ask for fewer bytes than the whole sector run.
-	buf := make([]byte, min(uint64(blocks)*uint64(d.BlockSize), uint64(dataLen)))
-	if _, err := d.ReadAt(buf, int64(lba)*int64(d.BlockSize)); err != nil {
-		return t.fail(senseMediumError, ascUnrecoveredRead, 0)
-	}
-	return buf, true
+	n = int64(min(uint64(blocks)*uint64(t.drive.BlockSize), uint64(dataLen)))
+	return int64(lba) * int64(t.drive.BlockSize), n, true
 }
+
+// writeRange validates a host OUT transfer of dataLen bytes and returns where it goes. Only
+// WRITE(10)/(12) of exactly the addressed blocks to a writable drive is accepted; anything else
+// sets sense and returns ok=false.
+func (t *scsiTarget) writeRange(cdb []byte, dataLen uint32) (off int64, ok bool) {
+	if len(cdb) == 0 || (cdb[0] != CmdWrite10 && cdb[0] != CmdWrite12) {
+		t.sense.set(senseIllegalRequest, ascInvalidCommand, 0)
+		return 0, false
+	}
+	lba, blocks, ok := t.blockRange(cdb)
+	d := t.drive
+	switch {
+	case !ok:
+		return 0, false
+	case d.ReadOnly:
+		t.sense.set(senseDataProtect, ascWriteProtected, 0)
+		return 0, false
+	case !d.Contains(lba, blocks):
+		t.sense.set(senseIllegalRequest, ascLBAOutOfRange, 0)
+		return 0, false
+	case uint64(dataLen) != uint64(blocks)*uint64(d.BlockSize):
+		t.sense.set(senseIllegalRequest, ascInvalidField, 0)
+		return 0, false
+	}
+	return int64(lba) * int64(d.BlockSize), true
+}
+
+// blockRange decodes the LBA and block count of a READ/WRITE (10) or (12) CDB.
+func (t *scsiTarget) blockRange(cdb []byte) (lba, blocks uint32, ok bool) {
+	switch {
+	case (cdb[0] == CmdRead10 || cdb[0] == CmdWrite10) && len(cdb) >= 9:
+		return be32(cdb[2:6]), uint32(be16(cdb[7:9])), true
+	case (cdb[0] == CmdRead12 || cdb[0] == CmdWrite12) && len(cdb) >= 10:
+		return be32(cdb[2:6]), be32(cdb[6:10]), true
+	}
+	t.sense.set(senseIllegalRequest, ascInvalidField, 0)
+	return 0, 0, false
+}
+
+// isRead reports whether a CDB is a READ(10)/(12), which the session streams.
+func isRead(cdb []byte) bool { return len(cdb) > 0 && (cdb[0] == CmdRead10 || cdb[0] == CmdRead12) }
 
 // requestSense returns the pending sense, truncated to the host transfer length.
 func (t *scsiTarget) requestSense(dataLen uint32) ([]byte, bool) {

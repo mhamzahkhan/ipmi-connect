@@ -18,6 +18,7 @@ const (
 	ascWriteProtected       byte = 0x27 // ASCQ 0x00: write protected
 	ascNotReady             byte = 0x3A // ASCQ 0x00: medium not present
 	ascUnrecoveredRead      byte = 0x11 // ASCQ 0x00: unrecovered read error
+	ascWriteError           byte = 0x0C // ASCQ 0x00: write error
 	ascNoAdditionalInfo     byte = 0x00
 	ascMediumMayHaveChanged byte = 0x28 // ASCQ 0x00: not ready to ready, medium changed
 )

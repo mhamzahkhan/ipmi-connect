@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -275,5 +276,106 @@ func TestReadTOCLegacyByte9Format(t *testing.T) {
 	data, ok := tgt.Execute([]byte{CmdReadTOC, 0, 0, 0, 0, 0, 0, 0, 0x0c, 0x40}, 0x0c)
 	if !ok || len(data) != 12 || data[1] != 0x0A {
 		t.Errorf("legacy byte-9 format 1 not honoured: ok=%v data=% x", ok, data)
+	}
+}
+
+// chunkImage is a zero-filled image that records the largest single read and write it was asked
+// for, to show the session streams instead of buffering a whole transfer.
+type chunkImage struct {
+	mu                sync.Mutex
+	data              []byte
+	maxRead, maxWrite int
+}
+
+func (c *chunkImage) ReadAt(p []byte, off int64) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maxRead = max(c.maxRead, len(p))
+	return copy(p, c.data[off:]), nil
+}
+
+func (c *chunkImage) WriteAt(p []byte, off int64) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maxWrite = max(c.maxWrite, len(p))
+	return copy(c.data[off:], p), nil
+}
+
+func mapOverPipe(t *testing.T, img vmedia.Image, o vmedia.MapOptions) *fakeBMC {
+	t.Helper()
+	g, conns := newGroupOverPipe(t, Credentials{Username: "t", Password: "t", IsSessionID: true})
+	mapErr := make(chan error, 1)
+	go func() {
+		_, err := g.Map(context.Background(), img, o)
+		mapErr <- err
+	}()
+	bmc := <-conns
+	bmc.handshake()
+	if err := <-mapErr; err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	return bmc
+}
+
+func TestLargeReadIsStreamedInChunks(t *testing.T) {
+	const sectors = 4096 // 8 MiB
+	img := &chunkImage{data: make([]byte, sectors*SectorSizeCD)}
+	bmc := mapOverPipe(t, img, vmedia.MapOptions{Target: vmedia.TargetCD, Size: int64(len(img.data))})
+
+	// READ(12) of the whole disc in one command.
+	bmc.cbw(1, sectors*SectorSizeCD, true, CmdRead12, 0, 0, 0, 0, 0, 0, 0, 0x10, 0, 0, 0)
+	data, csw := bmc.readResponse()
+	if csw.Status != CSWStatusGood || len(data) != sectors*SectorSizeCD || csw.Residue != 0 {
+		t.Fatalf("status %d, %d bytes, residue %d", csw.Status, len(data), csw.Residue)
+	}
+	img.mu.Lock()
+	defer img.mu.Unlock()
+	if img.maxRead > maxBulkChunk {
+		t.Errorf("image read in a %d-byte piece, want at most %d", img.maxRead, maxBulkChunk)
+	}
+}
+
+func TestWriteIsStreamedFrameByFrame(t *testing.T) {
+	const frame = 8 * SectorSizeDisk
+	img := &chunkImage{data: make([]byte, 64*SectorSizeDisk)}
+	bmc := mapOverPipe(t, img, vmedia.MapOptions{Target: vmedia.TargetRemovable, Size: int64(len(img.data))})
+
+	// WRITE(10): 32 blocks at LBA 8, sent as four frames.
+	bmc.cbw(2, 4*frame, false, CmdWrite10, 0, 0, 0, 0, 8, 0, 0, 32, 0)
+	for i := range 4 {
+		bmc.write(Header{Endpoint: EndpointBulkOut, Tag: TagEnqueue, PayloadLen: frame}, bytes.Repeat([]byte{byte(i + 1)}, frame))
+	}
+	if _, csw := bmc.readResponse(); csw.Status != CSWStatusGood {
+		t.Fatalf("CSW status %d", csw.Status)
+	}
+	img.mu.Lock()
+	defer img.mu.Unlock()
+	for i := range 4 {
+		start := 8*SectorSizeDisk + i*frame
+		if !bytes.Equal(img.data[start:start+frame], bytes.Repeat([]byte{byte(i + 1)}, frame)) {
+			t.Errorf("frame %d not written in place", i)
+		}
+	}
+	if img.maxWrite > frame {
+		t.Errorf("image written in a %d-byte piece, want at most one frame (%d)", img.maxWrite, frame)
+	}
+}
+
+func TestRefusedWriteIsDrainedAndSessionSurvives(t *testing.T) {
+	img := &chunkImage{data: make([]byte, 8*SectorSizeDisk)}
+	bmc := mapOverPipe(t, img, vmedia.MapOptions{Target: vmedia.TargetRemovable, Size: int64(len(img.data)), ReadOnly: true})
+
+	bmc.cbw(3, SectorSizeDisk, false, CmdWrite10, 0, 0, 0, 0, 0, 0, 0, 1, 0)
+	bmc.write(Header{Endpoint: EndpointBulkOut, Tag: TagEnqueue, PayloadLen: SectorSizeDisk}, bytes.Repeat([]byte{0xFF}, SectorSizeDisk))
+	if _, csw := bmc.readResponse(); csw.Status != CSWStatusCommandFail {
+		t.Fatalf("write to a read-only drive: CSW status %d", csw.Status)
+	}
+	// The next command must still be served: the refused data was drained, not taken as a CBW.
+	bmc.cbw(4, 0, true, CmdTestUnitReady, 0, 0, 0, 0, 0)
+	if _, csw := bmc.readResponse(); csw.Status != CSWStatusGood || csw.Tag != 4 {
+		t.Fatalf("after the refused write: CSW %+v", csw)
+	}
+	if img.maxWrite != 0 {
+		t.Error("read-only image was written")
 	}
 }
