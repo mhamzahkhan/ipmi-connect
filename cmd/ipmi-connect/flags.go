@@ -9,11 +9,11 @@ import (
 
 // options holds the parsed command line.
 type options struct {
-	Host      string
-	User      string // empty means IPMI_CONNECT_USER, else root
-	Password  string // empty means IPMI_CONNECT_PASSWORD, else prompt
-	Type      string // auto, dell or supermicro
-	WebPort   int
+	Host        string
+	User        string // empty means IPMI_CONNECT_USER, else root
+	Password    string // empty means IPMI_CONNECT_PASSWORD, else prompt
+	Type        string // auto, dell or supermicro
+	WebPort     int
 	NoBrowser   bool
 	ShowHelp    bool
 	ShowVersion bool
