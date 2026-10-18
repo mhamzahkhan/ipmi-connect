@@ -25,7 +25,7 @@ The protocols were reverse-engineered from the vendors' JARs. Nothing from those
 
 ## Quick start
 
-Requires Go 1.27+.
+Requires Go 1.27.2+.
 
 ```bash
 make build                                   # -> bin/ipmi-connect
@@ -71,6 +71,14 @@ internal/
   textkeys/            Text to USB HID key presses (US layout)
 docs/                  Hardware inventory, protocol specs, per-vendor deep dives
 ```
+
+## Security
+
+These BMCs predate modern TLS, so use ipmi-connect on a trusted management network.
+
+- **BMC certificates are not verified.** The BMCs use self-signed certificates and TLS 1.0, so the client accepts any certificate. Someone who can intercept traffic between you and the BMC could see the web login, which carries your password.
+- **Supermicro KVM and virtual media are not encrypted.** The screen and keystrokes travel in plain RFB (the firmware's "KVM SSL" mode is not supported), and virtual media uses RC4 under a fixed key published in the vendor client. Your password is not sent on these channels: they use one-time tickets from the web session.
+- **The local console** listens on 127.0.0.1 only. API and WebSocket requests need a per-run token, obtained through the one-time code in the launch link, and cross-site requests are refused.
 
 ## Known issues
 
