@@ -1,4 +1,6 @@
 # Build output
 /bin/
+/dist/
+/node_modules/
 
 .DS_Store
