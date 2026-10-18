@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export COPYFILE_DISABLE=1
+
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
   echo "Usage: $0 <version>" >&2
   exit 1
 fi
+VERSION="${VERSION#v}"
 
 # Determine repo root and output directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

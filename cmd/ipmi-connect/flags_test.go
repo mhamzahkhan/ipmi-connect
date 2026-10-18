@@ -53,3 +53,18 @@ func TestParseArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestGetVersion(t *testing.T) {
+	orig := version
+	defer func() { version = orig }()
+
+	version = "v1.2.3"
+	if got := getVersion(); got != "v1.2.3" {
+		t.Errorf("getVersion() = %q, want v1.2.3", got)
+	}
+
+	version = "dev"
+	if got := getVersion(); got == "" {
+		t.Errorf("getVersion() returned empty string")
+	}
+}

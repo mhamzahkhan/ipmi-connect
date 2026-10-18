@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 
@@ -19,10 +20,20 @@ import (
 
 var version = "dev"
 
+func getVersion() string {
+	if version != "dev" && version != "" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
+}
+
 func main() {
 	opts := parseArgs(os.Args[1:])
 	if opts.ShowVersion {
-		fmt.Printf("ipmi-connect %s\n", version)
+		fmt.Printf("ipmi-connect %s\n", getVersion())
 		os.Exit(0)
 	}
 	if opts.ShowHelp || opts.Host == "" {
