@@ -20,7 +20,7 @@ ipmi-connect talks to the BMCs' own KVM and virtual media protocols directly and
 
 It has been tested on the two boards I own. Other BMCs running the same firmware families may work, but I can't promise anything.
 
-| | Dell PowerEdge C6220 II | Supermicro X7SB3 |
+| | Dell PowerEdge C6220 II | Supermicro X8DTL-6F |
 | :--- | :--- | :--- |
 | BMC | ASPEED AST2300, Avocent firmware 2.62.5 | Winbond WPCM450, ATEN firmware 3.13 |
 | KVM protocol | Avocent APCP, two TLS sockets on 7578 | ATEN RFB 3.8 on 5900 |

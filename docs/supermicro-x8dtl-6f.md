@@ -1,12 +1,12 @@
-# Supermicro X7SB3 Deep Dive
+# Supermicro X8DTL-6F Deep Dive
 
 ## System Profile
 
-- **Device**: Supermicro Server (Motherboard: X7SB3)
+- **Device**: Supermicro Server (Motherboard: X8DTL-6F)
 - **BMC Hardware**: Winbond / Nuvoton WPCM450 (ARM926EJ-S core)
 - **Firmware Version**: `0313` / `3.13` (Built Jan 02 2014)
-- **Firmware Tag**: `BL_SUPERMICRO_X7SB3_2014-01-02_B`
-- **Host Architecture**: Intel 3200 Chipset / LGA775
+- **Firmware Tag**: `BL_SUPERMICRO_X7SB3_2014-01-02_B` (reused SMT 3.13 image)
+- **Host Architecture**: Intel 5500 Chipset / Dual LGA1366
 - **Firmware Vendor**: ATEN International Co., Ltd.
 
 ---

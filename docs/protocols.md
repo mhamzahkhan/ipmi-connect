@@ -147,7 +147,7 @@ When framing packets over TCP/TLS (`BEEF` / `0xDEADBEEF` headers):
 
 ## 2. Supermicro ATEN iKVM (modified RFB, port 5900)
 
-Sources: the X7SB3's own viewer, cross-checked with smkvm, noVNC's ATEN fork and chicken-aten.
+Sources: the X8DTL-6F's own viewer, cross-checked with smkvm, noVNC's ATEN fork and chicken-aten.
 Where they disagree, the vendor library for this firmware wins.
 
 ### 2.1 Getting a session

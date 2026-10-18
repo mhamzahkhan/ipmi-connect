@@ -115,7 +115,7 @@ func BuildDeviceSetupPacket(opts SetupOptions) (Header, []byte, error) {
 
 	// The header payload_len declares only the 44-byte auth prefix; the descriptor tables follow
 	// in the same frame and the BMC walks them by their length prefixes (verified against the
-	// X10 capture frame 31 and the X7SB3 /bin/usb). The RC4 stream still covers the whole payload.
+	// X10 capture frame 31 and the X8DTL-6F /bin/usb). The RC4 stream still covers the whole payload.
 	h := Header{
 		Endpoint:   EndpointControl,
 		Flags:      hdrFlags,

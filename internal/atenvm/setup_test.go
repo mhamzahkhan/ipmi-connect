@@ -43,7 +43,7 @@ func TestBuildDeviceSetupPacketCDROM(t *testing.T) {
 	if dec[41] != atenvm.ClassCDROM {
 		t.Errorf("class = 0x%02x, want CD-ROM", dec[41])
 	}
-	// Byte 0x57 of the packet (offset 79 of the payload) must be 0x05 for the X7SB3 to emulate a
+	// Byte 0x57 of the packet (offset 79 of the payload) must be 0x05 for the X8DTL-6F to emulate a
 	// 2048-byte CD-ROM.
 	if dec[79] != 0x05 {
 		t.Errorf("packet byte 0x57 = 0x%02x, want 0x05 (CD-ROM)", dec[79])

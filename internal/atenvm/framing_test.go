@@ -52,7 +52,7 @@ func TestRC4Crypt(t *testing.T) {
 	}
 }
 
-// Golden vector from Wireshark capture frame 31 (X10SLM-F / X7SB3 ATEN iKVM session).
+// Golden vector from Wireshark capture frame 31 (X10SLM-F / X8DTL-6F ATEN iKVM session).
 // Client sent 226 bytes: 8 bytes header + 218 bytes RC4 encrypted payload.
 func TestFrame31GoldenVector(t *testing.T) {
 	wireHeaderHex := "008000012c000000"

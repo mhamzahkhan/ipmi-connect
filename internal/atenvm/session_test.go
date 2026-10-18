@@ -446,7 +446,7 @@ func TestSecondDiskRefusedWhileFirstIsPlugging(t *testing.T) {
 	}
 }
 
-// The X7SB3 stalls the host after INQUIRY when a drive asks for port 1, whatever its type, and
+// The X8DTL-6F stalls the host after INQUIRY when a drive asks for port 1, whatever its type, and
 // the BMC picks the slot itself; every drive must ask for port 0 (flags bits 1-3 == 1).
 func TestEveryDriveRequestsPortZero(t *testing.T) {
 	tests := []struct {
