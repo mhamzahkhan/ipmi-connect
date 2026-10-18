@@ -14,6 +14,17 @@ const (
 	FlagAllocatePort  byte = 0x01 // Bit 0: 1 = Allocate port
 )
 
+// Device class selectors (Device Setup prefix byte 41).
+const (
+	ClassRemovable byte = 0x01
+	ClassFloppy    byte = 0x02
+	ClassHDD       byte = 0x03
+	ClassCDROM     byte = 0x04
+)
+
+// authPrefixLen is the fixed Device Setup prefix size the header declares.
+const authPrefixLen = 44
+
 // Status codes returned in TagDeviceSetupResp (payload byte 0).
 const (
 	StatusSetupOK            byte = 0x00
@@ -75,7 +86,7 @@ func BuildDeviceSetupPacket(opts SetupOptions) (Header, []byte, error) {
 
 	// Offset 41: Device class selector
 	if opts.Class == 0 {
-		opts.Class = 0x03 // Default to standard class index observed in capture
+		opts.Class = ClassCDROM
 	}
 	authPrefix[41] = opts.Class
 
@@ -100,13 +111,15 @@ func BuildDeviceSetupPacket(opts SetupOptions) (Header, []byte, error) {
 		wirePayload = enc
 	}
 
-	// In the vendor protocol, the 8-byte header payload_len is set to 44 (the auth prefix length),
+	// The header payload_len declares only the 44-byte auth prefix; the descriptor tables follow
+	// in the same frame and the BMC walks them by their length prefixes (verified against the
+	// X10 capture frame 31 and the X7SB3 /bin/usb). The RC4 stream still covers the whole payload.
 	h := Header{
 		Endpoint:   EndpointControl,
 		Flags:      hdrFlags,
 		DevPort:    0x00,
 		Tag:        TagDeviceSetupReq,
-		PayloadLen: uint32(len(wirePayload)),
+		PayloadLen: authPrefixLen,
 	}
 
 	return h, wirePayload, nil
@@ -153,28 +166,24 @@ func BuildEPSetupPacket() (Header, []byte) {
 	return h, payload
 }
 
-// BuildKeepalivePacket returns a Tag 0x03 Keepalive response PDU.
-func BuildKeepalivePacket(token uint32) (Header, []byte) {
-	payload := make([]byte, 4)
-	binary.LittleEndian.PutUint32(payload, token)
-	h := Header{
-		Endpoint:   EndpointControl,
-		Flags:      0x00,
-		DevPort:    0x00,
-		Tag:        TagPingResp,
-		PayloadLen: 4,
-	}
-	return h, payload
+// BuildKeepaliveRequest returns the client-initiated keepalive (tag 0x04). The BMC resets its
+// ~30 s idle timer on any inbound frame and replies with tag 0x03.
+func BuildKeepaliveRequest() (Header, []byte) {
+	payload := []byte{0xFF, 0xFF, 0xFF, 0xFF}
+	return Header{Tag: TagPingReq, PayloadLen: uint32(len(payload))}, payload
 }
 
-// BuildDetachPacket returns a Tag 0x05 Detach request PDU.
-func BuildDetachPacket(devPort byte) (Header, []byte) {
-	h := Header{
-		Endpoint:   EndpointControl,
-		Flags:      0x00,
-		DevPort:    devPort,
-		Tag:        TagDetachReq,
-		PayloadLen: 0,
+// BuildKeepaliveResponse returns a tag 0x03 reply, echoing the request payload where present.
+func BuildKeepaliveResponse(reqPayload []byte) (Header, []byte) {
+	payload := []byte{0xFF, 0xFF, 0xFF, 0xFF}
+	if len(reqPayload) >= 4 {
+		payload = append([]byte(nil), reqPayload[:4]...)
 	}
-	return h, nil
+	return Header{Tag: TagPingResp, PayloadLen: uint32(len(payload))}, payload
+}
+
+// BuildDetachPacket returns a Tag 0x05 Detach request. dev_port is ignored by the BMC after
+// setup, so it is left zero.
+func BuildDetachPacket() (Header, []byte) {
+	return Header{Tag: TagDetachReq, PayloadLen: 0}, nil
 }

@@ -2,416 +2,295 @@ package atenvm
 
 import (
 	"context"
-	"encoding/binary"
-	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"ipmi-connect/internal/vmedia"
 )
 
 const (
-	defaultKeepaliveInterval = 3 * time.Second
-	defaultWriteTimeout      = 10 * time.Second
-	defaultSetupTimeout      = 15 * time.Second
+	defaultKeepalive = 10 * time.Second // client sends keepalive; the BMC idle timeout is ~30 s
+	writeTimeout     = 10 * time.Second
+	setupTimeout     = 15 * time.Second
+	detachAckTimeout = 2 * time.Second
+	// maxBulkChunk bounds one bulk-IN data frame (the BMC's ring is ~260 KB).
+	maxBulkChunk = 64 * 1024
 )
 
-// SessionOptions configures a virtual media session.
-type SessionOptions struct {
-	Username          string
-	Password          string
-	IsSessionID       bool
-	PortIndex         byte
-	Class             byte
-	Descriptors       []byte
-	Encrypt           bool
-	KeepaliveInterval time.Duration
-}
+// deviceSession is one TCP connection carrying one emulated USB device (one drive). The ATEN
+// firmware allows exactly one device per connection, so a Group (below) opens one of these per
+// mapped drive.
+type deviceSession struct {
+	conn           net.Conn
+	target         SCSITarget
+	disk           uint16
+	tgtType        vmedia.Target
+	readOnly       bool
+	keepaliveEvery time.Duration
 
-type drive struct {
-	disk         uint16
-	target       vmedia.Target
-	readOnly     bool
-	blockSize    uint32
-	blocks       uint32
-	bytesRead    int64
-	bytesWritten int64
-}
-
-// Session manages a single ATEN Virtual Media TCP connection.
-// It implements vmedia.Session.
-type Session struct {
-	conn      net.Conn
-	opts      SessionOptions
-	sessionID uint32
-	devPort   byte
-	writeMu   sync.Mutex
-
-	mu        sync.Mutex
-	drives    map[uint16]*drive
-	target    SCSITarget
-	lastErr   error
-	lastEvent string
+	writeMu      sync.Mutex
+	bytesRead    atomic.Int64
+	bytesWritten atomic.Int64
 
 	stop      context.CancelFunc
 	done      chan struct{}
 	closeOnce sync.Once
+	mu        sync.Mutex
+	err       error
 }
 
-var _ vmedia.Session = (*Session)(nil)
+// setupOpts carries what Open needs to plug the device in.
+type setupOpts struct {
+	username, password string
+	isSessionID        bool
+	portIndex          byte
+	class              byte
+	descriptors        []byte
+	encrypt            bool
+}
 
-// NewSession creates an ATEN Virtual Media session over an established TCP connection.
-func NewSession(conn net.Conn, opts SessionOptions) *Session {
-	if opts.KeepaliveInterval == 0 {
-		opts.KeepaliveInterval = defaultKeepaliveInterval
+func newDeviceSession(conn net.Conn, target SCSITarget, disk uint16, tgtType vmedia.Target, readOnly bool, keepalive time.Duration) *deviceSession {
+	if keepalive <= 0 {
+		keepalive = defaultKeepalive
 	}
-	if len(opts.Descriptors) == 0 {
-		opts.Descriptors = CDROMDescriptors()
-	}
-
-	return &Session{
-		conn:    conn,
-		opts:    opts,
-		devPort: 1, // Port 1 once plugged in
-		drives:  make(map[uint16]*drive),
-		done:    make(chan struct{}),
+	return &deviceSession{
+		conn: conn, target: target, disk: disk, tgtType: tgtType, readOnly: readOnly,
+		keepaliveEvery: keepalive, done: make(chan struct{}),
 	}
 }
 
-// Open performs the Device Setup handshake and arms the USB endpoints.
-func (s *Session) Open(ctx context.Context) error {
-	deadline := time.Now().Add(defaultSetupTimeout)
+// open performs Device Setup + EP Setup, then starts the serve and keepalive goroutines.
+func (s *deviceSession) open(ctx context.Context, o setupOpts) error {
+	deadline := time.Now().Add(setupTimeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
 	_ = s.conn.SetDeadline(deadline)
-	defer func() { _ = s.conn.SetDeadline(time.Time{}) }()
 
-	// 1. Build and send Device Setup packet (Tag 0x01)
 	hSetup, setupPayload, err := BuildDeviceSetupPacket(SetupOptions{
-		Username:    s.opts.Username,
-		Password:    s.opts.Password,
-		IsSessionID: s.opts.IsSessionID,
-		PortIndex:   s.opts.PortIndex,
-		Class:       s.opts.Class,
-		Descriptors: s.opts.Descriptors,
-		Encrypt:     s.opts.Encrypt,
+		Username: o.username, Password: o.password, IsSessionID: o.isSessionID,
+		PortIndex: o.portIndex, Class: o.class, Descriptors: o.descriptors, Encrypt: o.encrypt,
 	})
 	if err != nil {
 		return fmt.Errorf("build setup packet: %w", err)
 	}
-	if err := s.writeFrame(hSetup, setupPayload); err != nil {
+	if err := WriteFrame(s.conn, hSetup, setupPayload); err != nil {
 		return fmt.Errorf("send setup packet: %w", err)
 	}
-
-	// 2. Read Device Setup Response (Tag 0x02)
 	hResp, respPayload, err := ReadFrame(s.conn)
 	if err != nil {
 		return fmt.Errorf("read setup response: %w", err)
 	}
 	if hResp.Tag != TagDeviceSetupResp {
-		return fmt.Errorf("unexpected setup response tag: 0x%02x (want 0x02)", hResp.Tag)
+		return fmt.Errorf("unexpected setup response tag 0x%02x", hResp.Tag)
 	}
-	status, sid, err := ParseDeviceSetupResponse(respPayload)
+	status, _, err := ParseDeviceSetupResponse(respPayload)
 	if err != nil {
 		return err
 	}
 	if status != StatusSetupOK {
-		return fmt.Errorf("setup refused with status 0x%02x", status)
+		return fmt.Errorf("device setup refused (status 0x%02x)", status)
 	}
-	s.sessionID = sid
-
-	// 3. Build and send USB EP Setup packet (Tag 0x07)
 	hEP, epPayload := BuildEPSetupPacket()
-	if err := s.writeFrame(hEP, epPayload); err != nil {
+	if err := WriteFrame(s.conn, hEP, epPayload); err != nil {
 		return fmt.Errorf("send EP setup: %w", err)
 	}
+	_ = s.conn.SetDeadline(time.Time{})
 
 	runCtx, stop := context.WithCancel(context.Background())
 	s.stop = stop
-
-	go s.run(runCtx)
-	go s.keepalives(runCtx)
-
+	go s.serve(runCtx)
+	go s.keepalive(runCtx)
 	return nil
 }
 
-// Close disconnects and cleans up the session.
-func (s *Session) Close() error {
-	var err error
+func (s *deviceSession) close() {
 	s.closeOnce.Do(func() {
 		if s.stop != nil {
 			s.stop()
 		}
-		// Send detach if connection is still alive
-		hDetach, _ := BuildDetachPacket(s.devPort)
-		_ = s.writeFrameWithin(hDetach, nil, 1*time.Second)
-
-		err = s.conn.Close()
+		// Best-effort detach, then close regardless of the ack.
+		hDetach, _ := BuildDetachPacket()
+		_ = s.writeFrameWithin(hDetach, nil, detachAckTimeout)
+		_ = s.conn.Close()
 		close(s.done)
 	})
-	return err
 }
 
-// Done returns a channel that is closed when the session ends.
-func (s *Session) Done() <-chan struct{} {
-	return s.done
-}
-
-// Map attaches a disk image to the session.
-func (s *Session) Map(ctx context.Context, img vmedia.Image, opts vmedia.MapOptions) (uint16, error) {
+func (s *deviceSession) fail(err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	select {
-	case <-s.done:
-		return 0, errors.New("session closed")
-	default:
+	if s.err == nil {
+		s.err = err
 	}
-
-	disk := uint16(opts.Target)
-	if _, exists := s.drives[disk]; exists {
-		return 0, fmt.Errorf("drive %d is already mapped", disk)
-	}
-
-	blockSize := uint32(SectorSizeCD)
-	if opts.Target == vmedia.TargetCD {
-		s.target = NewISOTarget(img, opts.Size)
-	} else {
-		blockSize = uint32(SectorSizeDisk)
-		s.target = NewDiskTarget(img, opts.Size, opts.ReadOnly)
-	}
-
-	blocks := uint32(opts.Size / int64(blockSize))
-	if opts.Size%int64(blockSize) != 0 {
-		blocks++
-	}
-
-	s.drives[disk] = &drive{
-		disk:      disk,
-		target:    opts.Target,
-		readOnly:  opts.ReadOnly,
-		blockSize: blockSize,
-		blocks:    blocks,
-	}
-
-	return disk, nil
-}
-
-// Unmap detaches a drive by its disk identifier.
-func (s *Session) Unmap(disk uint16) error {
-	s.mu.Lock()
-	delete(s.drives, disk)
-	s.target = nil
-	empty := len(s.drives) == 0
 	s.mu.Unlock()
-
-	if empty {
-		// No drives mapped: detach device
-		hDetach, _ := BuildDetachPacket(s.devPort)
-		_ = s.writeFrameWithin(hDetach, nil, 2*time.Second)
-	}
-	return nil
+	s.close()
 }
 
-// USBReset arms/resets the endpoint queues.
-func (s *Session) USBReset() error {
-	hEP, epPayload := BuildEPSetupPacket()
-	return s.writeFrame(hEP, epPayload)
+func (s *deviceSession) writeFrame(h Header, payload []byte) error {
+	return s.writeFrameWithin(h, payload, writeTimeout)
 }
 
-// Err returns the error that caused the session to end.
-func (s *Session) Err() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.lastErr
-}
-
-// LastEvent returns the latest drive-level failure message.
-func (s *Session) LastEvent() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.lastEvent
-}
-
-// Drives returns the current status and I/O counters for all mapped drives.
-func (s *Session) Drives() []vmedia.DriveStatus {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	res := make([]vmedia.DriveStatus, 0, len(s.drives))
-	for _, d := range s.drives {
-		res = append(res, vmedia.DriveStatus{
-			Disk:         d.disk,
-			Target:       d.target,
-			ReadOnly:     d.readOnly,
-			BlockSize:    d.blockSize,
-			Blocks:       d.blocks,
-			BytesRead:    d.bytesRead,
-			BytesWritten: d.bytesWritten,
-		})
-	}
-	return res
-}
-
-func (s *Session) writeFrame(h Header, payload []byte) error {
-	return s.writeFrameWithin(h, payload, defaultWriteTimeout)
-}
-
-func (s *Session) writeFrameWithin(h Header, payload []byte, timeout time.Duration) error {
+func (s *deviceSession) writeFrameWithin(h Header, payload []byte, timeout time.Duration) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-
 	_ = s.conn.SetWriteDeadline(time.Now().Add(timeout))
 	defer func() { _ = s.conn.SetWriteDeadline(time.Time{}) }()
-
 	return WriteFrame(s.conn, h, payload)
 }
 
-func (s *Session) keepalives(ctx context.Context) {
-	if s.opts.KeepaliveInterval <= 0 {
-		return
-	}
-	ticker := time.NewTicker(s.opts.KeepaliveInterval)
-	defer ticker.Stop()
-
+func (s *deviceSession) keepalive(ctx context.Context) {
+	t := time.NewTicker(s.keepaliveEvery)
+	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			hPing, pingPayload := BuildKeepalivePacket(0xFFFFFFFF)
-			if err := s.writeFrame(hPing, pingPayload); err != nil {
+		case <-t.C:
+			// The client is the keepalive initiator: send tag 0x04, the BMC replies 0x03 (ignored).
+			h, payload := BuildKeepaliveRequest()
+			if err := s.writeFrame(h, payload); err != nil {
 				return
 			}
 		}
 	}
 }
 
-func (s *Session) run(ctx context.Context) {
+// serve reads BMC frames and dispatches them. Control frames may interleave with a CBW's OUT data.
+func (s *deviceSession) serve(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-
 		h, payload, err := ReadFrame(s.conn)
 		if err != nil {
-			s.mu.Lock()
-			s.lastErr = err
-			s.mu.Unlock()
-			_ = s.Close()
+			s.fail(err)
 			return
 		}
-
 		switch h.Tag {
-		case TagEnqueue:
+		case TagEnqueue, TagEnqueueAndGo:
 			if h.Endpoint == EndpointBulkOut {
-				// Incoming Command Block Wrapper (CBW)
-				cbw, err := ParseCBW(payload)
-				if err != nil {
-					continue
+				if err := s.handleCBW(payload); err != nil {
+					s.fail(err)
+					return
 				}
-				s.serveCBW(cbw)
 			}
-
+		case TagPingResp:
+			// BMC's keepalive reply; nothing to do.
 		case TagPingReq:
-			// Server keepalive ping: echo token in TagPingResp
-			token := uint32(0xFFFFFFFF)
-			if len(payload) >= 4 {
-				token = binary.LittleEndian.Uint32(payload[0:4])
-			}
-			hPong, pongPayload := BuildKeepalivePacket(token)
-			_ = s.writeFrame(hPong, pongPayload)
-
+			// Some firmware may ping; answer to be safe.
+			h2, p2 := BuildKeepaliveResponse(payload)
+			_ = s.writeFrame(h2, p2)
 		case TagDetachResp:
-			// Detach acknowledged by BMC
-			_ = s.Close()
+			s.close()
 			return
-
-		case TagStatusReq:
-			// Drive status query
-			s.mu.Lock()
-			st := byte(0xFF)
-			if len(s.drives) > 0 {
-				st = 0x03
-			}
-			s.mu.Unlock()
-			hStat := Header{
-				Endpoint:   EndpointControl,
-				Flags:      0x00,
-				DevPort:    0x00,
-				Tag:        TagStatusResp,
-				PayloadLen: 3,
-			}
-			_ = s.writeFrame(hStat, []byte{0x02, st, 0xFF})
 		}
 	}
 }
 
-func (s *Session) serveCBW(cbw CBW) {
-	s.mu.Lock()
-	target := s.target
-	s.mu.Unlock()
+// handleCBW parses a CBW and services the command. For an OUT command it first gathers the host's
+// write data, which may span several frames with control frames interleaved.
+func (s *deviceSession) handleCBW(payload []byte) error {
+	cbw, err := ParseCBW(payload)
+	if err != nil {
+		// No CSW is possible without a tag; log and resync on the next frame.
+		log.Printf("[Supermicro] Dropping malformed CBW: %v", err)
+		return nil
+	}
+	cdb := cbw.CDB[:cbw.CDBLength]
+	out := cbw.Flags&0x80 == 0 && cbw.DataLen > 0
 
-	var data []byte
-	status := CSWStatusCommandFail
-	residue := cbw.DataLen
-
-	// Handle Host-to-Device (OUT) transfer (WRITE commands)
-	if cbw.Flags&0x80 == 0 && cbw.DataLen > 0 {
-		hData, dataPayload, err := ReadFrame(s.conn)
+	if out {
+		data, err := s.readOutData(cbw.DataLen)
 		if err != nil {
-			return
+			return err
 		}
-		if target != nil && hData.Endpoint == EndpointBulkOut {
-			status = target.WriteData(cbw.CDB[:cbw.CDBLength], dataPayload)
+		status := s.target.WriteData(cdb, data)
+		if status == CSWStatusGood {
+			s.bytesWritten.Add(int64(len(data)))
 		}
-		s.mu.Lock()
-		for _, d := range s.drives {
-			d.bytesWritten += int64(len(dataPayload))
-		}
-		s.mu.Unlock()
-		residue = 0
-	} else if target != nil {
-		data, status, residue = target.ExecuteCDB(cbw.CDB[:cbw.CDBLength], cbw.DataLen)
+		return s.sendCSW(cbw.Tag, cbw.DataLen, 0, status)
 	}
 
-	// 1. Send Data PDU if command returned data
+	data, ok := s.target.Execute(cdb, cbw.DataLen)
+	status := CSWStatusGood
+	if !ok {
+		status = CSWStatusCommandFail
+	}
 	if len(data) > 0 {
-		hData := Header{
-			Endpoint:   EndpointBulkIn,
-			Flags:      0x00,
-			DevPort:    s.devPort,
-			Tag:        TagEnqueue,
-			PayloadLen: uint32(len(data)),
+		if err := s.sendData(data); err != nil {
+			return err
 		}
-		if err := s.writeFrame(hData, data); err != nil {
-			return
-		}
+		s.bytesRead.Add(int64(len(data)))
+	}
+	residue := cbw.DataLen - uint32(len(data))
+	return s.sendCSW(cbw.Tag, cbw.DataLen, residue, status)
+}
 
-		s.mu.Lock()
-		for _, d := range s.drives {
-			d.bytesRead += int64(len(data))
+// readOutData collects dataLen bytes of host write data, answering control frames that interleave.
+func (s *deviceSession) readOutData(dataLen uint32) ([]byte, error) {
+	buf := make([]byte, 0, dataLen)
+	for uint32(len(buf)) < dataLen {
+		h, payload, err := ReadFrame(s.conn)
+		if err != nil {
+			return nil, err
 		}
-		s.mu.Unlock()
+		switch {
+		case h.Endpoint == EndpointBulkOut && (h.Tag == TagEnqueue || h.Tag == TagEnqueueAndGo):
+			need := dataLen - uint32(len(buf))
+			if uint32(len(payload)) > need {
+				payload = payload[:need]
+			}
+			buf = append(buf, payload...)
+		case h.Tag == TagPingReq || h.Tag == TagPingResp:
+			// A keepalive may interleave; skip it without writing, so reassembly never blocks.
+		default:
+			return nil, fmt.Errorf("unexpected frame (tag 0x%02x) while reading write data", h.Tag)
+		}
 	}
+	return buf, nil
+}
 
-	// 2. Send Command Status Wrapper (CSW)
-	csw := CSW{
-		Tag:     cbw.Tag,
-		Residue: residue,
-		Status:  status,
+// sendData sends bulk-IN data in frames of at most maxBulkChunk bytes.
+func (s *deviceSession) sendData(data []byte) error {
+	for len(data) > 0 {
+		n := len(data)
+		if n > maxBulkChunk {
+			n = maxBulkChunk
+		}
+		h := Header{Endpoint: EndpointBulkIn, Tag: TagEnqueue, PayloadLen: uint32(n)}
+		if err := s.writeFrame(h, data[:n]); err != nil {
+			return err
+		}
+		data = data[n:]
 	}
-	hCSW := Header{
-		Endpoint:   EndpointBulkIn,
-		Flags:      0x00,
-		DevPort:    s.devPort,
-		Tag:        TagEnqueueAndGo,
-		PayloadLen: CSWLength,
+	return nil
+}
+
+func (s *deviceSession) sendCSW(tag, dataLen, residue uint32, status byte) error {
+	csw := CSW{Tag: tag, Residue: residue, Status: status}
+	h := Header{Endpoint: EndpointBulkIn, Tag: TagEnqueueAndGo, PayloadLen: CSWLength}
+	return s.writeFrame(h, csw.Encode())
+}
+
+func (s *deviceSession) status() vmedia.DriveStatus {
+	blockSize := uint32(SectorSizeCD)
+	if s.tgtType != vmedia.TargetCD {
+		blockSize = SectorSizeDisk
 	}
-	_ = s.writeFrame(hCSW, csw.Encode())
+	return vmedia.DriveStatus{
+		Disk: s.disk, Target: s.tgtType, ReadOnly: s.readOnly, BlockSize: blockSize,
+		BytesRead: s.bytesRead.Load(), BytesWritten: s.bytesWritten.Load(),
+	}
+}
+
+func (s *deviceSession) lastErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
 }

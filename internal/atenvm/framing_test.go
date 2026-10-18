@@ -90,16 +90,13 @@ func TestFrame31GoldenVector(t *testing.T) {
 		t.Fatalf("RC4 decryption failed: %v", err)
 	}
 
-	// Verify username and password in decrypted prefix:
-	expectedUser := "xhyhahrzosmwpjhk"
-	actualUser := string(bytes.TrimRight(decrypted[0:16], "\x00"))
-	if actualUser != expectedUser {
-		t.Errorf("decrypted username = %q, want %q", actualUser, expectedUser)
-	}
-
-	actualPass := string(bytes.TrimRight(decrypted[16:36], "\x00"))
-	if actualPass != expectedUser {
-		t.Errorf("decrypted password = %q, want %q", actualPass, expectedUser)
+	// The captured session's token is public and expired; assert structure, not its value, so no
+	// credential string is embedded in the product repo. User and password are the same 16-char
+	// token, NUL-padded.
+	user := bytes.TrimRight(decrypted[0:16], "\x00")
+	pass := bytes.TrimRight(decrypted[16:36], "\x00")
+	if len(user) != 16 || !bytes.Equal(user, pass) {
+		t.Errorf("expected a 16-char token repeated as user and password, got user=%q pass=%q", user, pass)
 	}
 
 	// Verify flags: 0x83 (JNLP SID auth + port 1)

@@ -131,6 +131,9 @@ func TestBackoff(t *testing.T) {
 func TestClientVMediaIntegration(t *testing.T) {
 	c := NewClient("192.0.2.20", "ADMIN", "pw")
 	c.web = newFakeWeb(t, &fakeBMCWeb{password: "pw", sid: "0123456789abcdef"})
+	if err := c.web.Login(); err != nil { // the web session must be up for the JNLP token
+		t.Fatalf("web login: %v", err)
+	}
 
 	serverConnCh := make(chan net.Conn, 1)
 	c.dial = func(ctx context.Context, addr string) (net.Conn, error) {
@@ -139,70 +142,54 @@ func TestClientVMediaIntegration(t *testing.T) {
 		return cli, nil
 	}
 
-	// Serve the fake BMC virtual media service in the background
+	// Fake BMC virtual media service: one connection per mapped drive.
 	go func() {
 		srv := <-serverConnCh
 		defer srv.Close()
-
-		// 1. Read Setup Request
-		hSetup, _, err := atenvm.ReadFrame(srv)
-		if err != nil {
+		// The setup frame declares a 44-byte prefix but carries the descriptors too.
+		hdr := make([]byte, atenvm.HeaderLen)
+		if _, err := io.ReadFull(srv, hdr); err != nil {
 			return
 		}
-		if hSetup.Tag != atenvm.TagDeviceSetupReq {
+		h, _ := atenvm.DecodeHeader(hdr)
+		if h.Tag != atenvm.TagDeviceSetupReq {
+			t.Errorf("first frame tag 0x%02x, want device setup", h.Tag)
 			return
 		}
-
-		// 2. Reply Setup Response
-		hResp := atenvm.Header{
-			Endpoint:   atenvm.EndpointControl,
-			Flags:      0x00,
-			DevPort:    0x00,
-			Tag:        atenvm.TagDeviceSetupResp,
-			PayloadLen: 9,
+		if _, err := io.ReadFull(srv, make([]byte, int(h.PayloadLen)+174)); err != nil {
+			return
 		}
-		_ = atenvm.WriteFrame(srv, hResp, []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x00, 0x00, 0x00, 0x00})
-
-		// 3. Read EP Setup
-		_, _, _ = atenvm.ReadFrame(srv)
-
-		// 4. Read Detach
-		hDetach, _, _ := atenvm.ReadFrame(srv)
-		if hDetach.Tag == atenvm.TagDetachReq {
-			hDetachResp := atenvm.Header{
-				Endpoint:   atenvm.EndpointControl,
-				Flags:      0x00,
-				DevPort:    0x00,
-				Tag:        atenvm.TagDetachResp,
-				PayloadLen: 1,
+		_ = atenvm.WriteFrame(srv, atenvm.Header{Tag: atenvm.TagDeviceSetupResp, PayloadLen: 9},
+			[]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x00, 0x00, 0x00, 0x00})
+		for {
+			fh, _, err := atenvm.ReadFrame(srv)
+			if err != nil {
+				return
 			}
-			_ = atenvm.WriteFrame(srv, hDetachResp, []byte{0x00})
+			if fh.Tag == atenvm.TagDetachReq {
+				_ = atenvm.WriteFrame(srv, atenvm.Header{Tag: atenvm.TagDetachResp, PayloadLen: 1}, []byte{0x00})
+				return
+			}
 		}
 	}()
 
-	// Create temp ISO file
 	isoPath := filepath.Join(t.TempDir(), "test.iso")
 	if err := os.WriteFile(isoPath, make([]byte, 4096), 0600); err != nil {
 		t.Fatal(err)
 	}
-
 	img, err := c.AddImage(isoPath, false)
 	if err != nil {
 		t.Fatalf("AddImage: %v", err)
 	}
-
 	if err := c.MapImage(img.ID, bmc.TargetCD); err != nil {
 		t.Fatalf("MapImage: %v", err)
 	}
-
 	st := c.MediaStatus()
 	if len(st.Drives) != 1 || st.Images[0].MappedTo != bmc.TargetCD {
 		t.Fatalf("unexpected media status: %+v", st)
 	}
-
 	if err := c.UnmapDrive(bmc.TargetCD); err != nil {
 		t.Fatalf("UnmapDrive: %v", err)
 	}
-
 	c.Logout()
 }

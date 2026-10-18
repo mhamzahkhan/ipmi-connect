@@ -1,4 +1,4 @@
-package atenvm_test
+package atenvm
 
 import (
 	"bytes"
@@ -9,265 +9,210 @@ import (
 	"testing"
 	"time"
 
-	"ipmi-connect/internal/atenvm"
 	"ipmi-connect/internal/vmedia"
 )
 
-type fakeImage struct {
-	data []byte
+// fakeBMC is the BMC side of a virtual media connection over net.Pipe.
+type fakeBMC struct {
+	t    *testing.T
+	conn net.Conn
 }
 
-func (f *fakeImage) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(f.data)) {
-		return 0, io.EOF
-	}
-	n := copy(p, f.data[off:])
-	return n, nil
-}
-
-func (f *fakeImage) WriteAt(p []byte, off int64) (int, error) {
-	if off+int64(len(p)) > int64(len(f.data)) {
-		return 0, io.ErrUnexpectedEOF
-	}
-	n := copy(f.data[off:], p)
-	return n, nil
-}
-
-func TestSessionLifecycleAndCBWLoop(t *testing.T) {
-	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	sess := atenvm.NewSession(clientConn, atenvm.SessionOptions{
-		Username:          "tokenABC",
-		Password:          "tokenABC",
-		IsSessionID:       true,
-		Encrypt:           true,
-		KeepaliveInterval: 10 * time.Millisecond,
-	})
-
-	serverDone := make(chan struct{})
-
-	// Mock BMC Server
-	go func() {
-		defer close(serverDone)
-
-		// 1. Read Setup Request
-		hSetup, _, err := atenvm.ReadFrame(serverConn)
-		if err != nil {
-			t.Errorf("server: read setup failed: %v", err)
-			return
-		}
-		if hSetup.Tag != atenvm.TagDeviceSetupReq {
-			t.Errorf("server: tag = 0x%02x, want 0x01", hSetup.Tag)
-			return
-		}
-
-		// 2. Reply Setup Response
-		hResp := atenvm.Header{
-			Endpoint:   atenvm.EndpointControl,
-			Flags:      0x00,
-			DevPort:    0x00,
-			Tag:        atenvm.TagDeviceSetupResp,
-			PayloadLen: 9,
-		}
-		respPayload := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00}
-		if err := atenvm.WriteFrame(serverConn, hResp, respPayload); err != nil {
-			t.Errorf("server: write setup resp failed: %v", err)
-			return
-		}
-
-		// 3. Read EP Setup
-		hEP, _, err := atenvm.ReadFrame(serverConn)
-		if err != nil {
-			t.Errorf("server: read EP setup failed: %v", err)
-			return
-		}
-		if hEP.Tag != atenvm.TagEPSetup {
-			t.Errorf("server: tag = 0x%02x, want 0x07", hEP.Tag)
-			return
-		}
-
-		// 4. Send INQUIRY CBW from Host (Bulk OUT, endpoint 0x11, tag 0x00)
-		cbwInquiry := make([]byte, atenvm.CBWLength)
-		binary.LittleEndian.PutUint32(cbwInquiry[0:4], atenvm.CBWSignature) // "USBC"
-		binary.LittleEndian.PutUint32(cbwInquiry[4:8], 0x100)               // dCBWTag
-		binary.LittleEndian.PutUint32(cbwInquiry[8:12], 36)                 // dCBWDataTransferLength
-		cbwInquiry[12] = 0x80                                               // Device to host (IN)
-		cbwInquiry[14] = 6                                                  // CDB len
-		cbwInquiry[15] = atenvm.CmdInquiry
-		cbwInquiry[19] = 36 // alloc len
-
-		hCBW := atenvm.Header{
-			Endpoint:   atenvm.EndpointBulkOut,
-			Flags:      atenvm.FlagBMCQueue,
-			DevPort:    1,
-			Tag:        atenvm.TagEnqueue,
-			PayloadLen: atenvm.CBWLength,
-		}
-		if err := atenvm.WriteFrame(serverConn, hCBW, cbwInquiry); err != nil {
-			t.Errorf("server: write inquiry CBW failed: %v", err)
-			return
-		}
-
-		// 5. Read INQUIRY Data PDU (Bulk IN, endpoint 0x22, tag 0x00)
-		hData, inqData, err := atenvm.ReadFrame(serverConn)
-		if err != nil {
-			t.Errorf("server: read inquiry data failed: %v", err)
-			return
-		}
-		if hData.Endpoint != atenvm.EndpointBulkIn || hData.Tag != atenvm.TagEnqueue || len(inqData) != 36 {
-			t.Errorf("server: unexpected inquiry data header/payload: %+v (len %d)", hData, len(inqData))
-			return
-		}
-		if !bytes.Contains(inqData, []byte("Virtual CDROM")) {
-			t.Errorf("server: inquiry data does not contain product string")
-			return
-		}
-
-		// 6. Read INQUIRY CSW (Bulk IN, endpoint 0x22, tag 0xFF)
-		hCSW, cswBytes, err := atenvm.ReadFrame(serverConn)
-		if err != nil {
-			t.Errorf("server: read inquiry CSW failed: %v", err)
-			return
-		}
-		if hCSW.Tag != atenvm.TagEnqueueAndGo || len(cswBytes) != atenvm.CSWLength {
-			t.Errorf("server: unexpected inquiry CSW header: %+v", hCSW)
-			return
-		}
-		csw, err := atenvm.ParseCSW(cswBytes)
-		if err != nil || csw.Tag != 0x100 || csw.Status != atenvm.CSWStatusGood {
-			t.Errorf("server: unexpected inquiry CSW: %+v, err=%v", csw, err)
-			return
-		}
-
-		// 7. Send READ(10) CBW for LBA 0, 1 sector (2048 B)
-		cbwRead := make([]byte, atenvm.CBWLength)
-		binary.LittleEndian.PutUint32(cbwRead[0:4], atenvm.CBWSignature)
-		binary.LittleEndian.PutUint32(cbwRead[4:8], 0x101)
-		binary.LittleEndian.PutUint32(cbwRead[8:12], 2048)
-		cbwRead[12] = 0x80
-		cbwRead[14] = 10
-		cbwRead[15] = atenvm.CmdRead10
-		binary.BigEndian.PutUint32(cbwRead[17:21], 0) // LBA 0
-		binary.BigEndian.PutUint16(cbwRead[22:24], 1) // 1 sector
-
-		if err := atenvm.WriteFrame(serverConn, hCBW, cbwRead); err != nil {
-			t.Errorf("server: write read CBW failed: %v", err)
-			return
-		}
-
-		// 8. Read READ(10) Data PDU
-		hDataRead, readData, err := atenvm.ReadFrame(serverConn)
-		if err != nil || len(readData) != 2048 {
-			t.Errorf("server: read sector data failed: %+v (len %d), err=%v", hDataRead, len(readData), err)
-			return
-		}
-
-		// 9. Read READ(10) CSW
-		hCSWRead, cswReadBytes, err := atenvm.ReadFrame(serverConn)
-		if err != nil {
-			t.Errorf("server: read read CSW failed: %v", err)
-			return
-		}
-		cswRead, err := atenvm.ParseCSW(cswReadBytes)
-		if err != nil || cswRead.Tag != 0x101 || cswRead.Status != atenvm.CSWStatusGood || hCSWRead.Tag != atenvm.TagEnqueueAndGo {
-			t.Errorf("server: unexpected read CSW: %+v, err=%v", cswRead, err)
-			return
-		}
-
-		// 10. Send Keepalive Ping Request (Tag 0x04)
-		hPing := atenvm.Header{
-			Endpoint:   atenvm.EndpointControl,
-			Flags:      0x00,
-			DevPort:    0x00,
-			Tag:        atenvm.TagPingReq,
-			PayloadLen: 4,
-		}
-		if err := atenvm.WriteFrame(serverConn, hPing, []byte{0xaa, 0xbb, 0xcc, 0xdd}); err != nil {
-			t.Errorf("server: write ping failed: %v", err)
-			return
-		}
-
-		// 11. Read Ping Response (Tag 0x03)
-		hPong, pongData, err := atenvm.ReadFrame(serverConn)
-		if err != nil {
-			t.Errorf("server: read pong failed: %v", err)
-			return
-		}
-		if hPong.Tag != atenvm.TagPingResp || !bytes.Equal(pongData, []byte{0xaa, 0xbb, 0xcc, 0xdd}) {
-			t.Errorf("server: unexpected pong payload: %+v %v", hPong, pongData)
-			return
-		}
-
-		// 12. Read Detach Request (Tag 0x05)
-		hDetach, _, err := atenvm.ReadFrame(serverConn)
-		if err != nil {
-			return
-		}
-		if hDetach.Tag == atenvm.TagDetachReq {
-			hDetachResp := atenvm.Header{
-				Endpoint:   atenvm.EndpointControl,
-				Flags:      0x00,
-				DevPort:    0x00,
-				Tag:        atenvm.TagDetachResp,
-				PayloadLen: 1,
-			}
-			_ = atenvm.WriteFrame(serverConn, hDetachResp, []byte{0x00})
-		}
-	}()
-
-	// 1. Open session
-	if err := sess.Open(ctx); err != nil {
-		t.Fatalf("sess.Open failed: %v", err)
-	}
-
-	// 2. Map ISO image
-	fakeData := make([]byte, 8192)
-	copy(fakeData, "CD-ROM ISO DATA HEADER")
-	img := &fakeImage{data: fakeData}
-	disk, err := sess.Map(ctx, img, vmedia.MapOptions{
-		Target:   vmedia.TargetCD,
-		Size:     int64(len(fakeData)),
-		ReadOnly: true,
-	})
+func (b *fakeBMC) read() (Header, []byte) {
+	b.t.Helper()
+	_ = b.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	h, p, err := ReadFrame(b.conn)
 	if err != nil {
-		t.Fatalf("sess.Map failed: %v", err)
+		b.t.Fatalf("BMC read: %v", err)
 	}
-	if disk != uint16(vmedia.TargetCD) {
-		t.Errorf("disk = %d, want %d", disk, vmedia.TargetCD)
+	return h, p
+}
+
+func (b *fakeBMC) write(h Header, p []byte) {
+	b.t.Helper()
+	if err := WriteFrame(b.conn, h, p); err != nil {
+		b.t.Fatalf("BMC write: %v", err)
+	}
+}
+
+// handshake completes Device Setup + EP Setup from the BMC side.
+func (b *fakeBMC) handshake() {
+	b.t.Helper()
+	// The setup frame's header declares only the 44-byte prefix; read the trailing 174 descriptor
+	// bytes too, as the real BMC does by walking them.
+	_ = b.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	hdr := make([]byte, HeaderLen)
+	if _, err := io.ReadFull(b.conn, hdr); err != nil {
+		b.t.Fatalf("BMC read setup header: %v", err)
+	}
+	h, _ := DecodeHeader(hdr)
+	if h.Tag != TagDeviceSetupReq {
+		b.t.Fatalf("first frame tag 0x%02x, want device setup", h.Tag)
+	}
+	if _, err := io.ReadFull(b.conn, make([]byte, int(h.PayloadLen)+174)); err != nil {
+		b.t.Fatalf("BMC read setup body: %v", err)
+	}
+	b.write(Header{Tag: TagDeviceSetupResp, PayloadLen: 9}, []byte{0, 0x78, 0x56, 0x34, 0x12, 0, 0, 0, 0})
+	if h, _ := b.read(); h.Tag != TagEPSetup {
+		b.t.Fatalf("second frame tag 0x%02x, want EP setup", h.Tag)
+	}
+}
+
+// cbw sends a CBW to the client.
+func (b *fakeBMC) cbw(tag, dataLen uint32, in bool, cdb ...byte) {
+	b.t.Helper()
+	w := make([]byte, 31)
+	binary.LittleEndian.PutUint32(w[0:4], CBWSignature)
+	binary.LittleEndian.PutUint32(w[4:8], tag)
+	binary.LittleEndian.PutUint32(w[8:12], dataLen)
+	if in {
+		w[12] = 0x80
+	}
+	w[14] = byte(len(cdb))
+	copy(w[15:], cdb)
+	b.write(Header{Endpoint: EndpointBulkOut, Tag: TagEnqueue, PayloadLen: 31}, w)
+}
+
+// readResponse collects data frames until the CSW (tag 0xFF) and returns the data and CSW.
+func (b *fakeBMC) readResponse() ([]byte, CSW) {
+	b.t.Helper()
+	var data []byte
+	for {
+		h, p := b.read()
+		if h.Tag == TagEnqueueAndGo {
+			csw, err := ParseCSW(p)
+			if err != nil {
+				b.t.Fatalf("parse CSW: %v", err)
+			}
+			return data, csw
+		}
+		data = append(data, p...)
+	}
+}
+
+// newGroupOverPipe returns a Group whose connector hands each Map its own pipe; the BMC side of
+// each is delivered on the conns channel.
+func newGroupOverPipe(t *testing.T, creds Credentials) (*Group, <-chan *fakeBMC) {
+	t.Helper()
+	conns := make(chan *fakeBMC, 4)
+	g := NewGroup(func(ctx context.Context) (net.Conn, Credentials, error) {
+		server, client := net.Pipe()
+		t.Cleanup(func() { _ = server.Close(); _ = client.Close() })
+		conns <- &fakeBMC{t: t, conn: server}
+		return client, creds, nil
+	})
+	g.SetKeepaliveInterval(50 * time.Millisecond)
+	t.Cleanup(func() { _ = g.Close() })
+	return g, conns
+}
+
+func TestGroupMapServesCDAndDetaches(t *testing.T) {
+	g, conns := newGroupOverPipe(t, Credentials{Username: "tok", Password: "tok", IsSessionID: true, Encrypt: true})
+	img := &memImage{data: bytes.Repeat([]byte{0xCC}, 4*SectorSizeCD)}
+
+	mapErr := make(chan error, 1)
+	go func() {
+		_, err := g.Map(context.Background(), img, vmedia.MapOptions{Target: vmedia.TargetCD, Size: int64(len(img.data))})
+		mapErr <- err
+	}()
+	bmc := <-conns
+	bmc.handshake()
+	if err := <-mapErr; err != nil {
+		t.Fatalf("Map: %v", err)
 	}
 
-	// Wait for server exchange to finish
-	select {
-	case <-serverDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("timed out waiting for server exchange")
+	// INQUIRY.
+	bmc.cbw(1, 36, true, CmdInquiry, 0, 0, 0, 36, 0)
+	data, csw := bmc.readResponse()
+	if csw.Status != CSWStatusGood || csw.Tag != 1 || !bytes.Contains(data, []byte("Virtual CDROM")) {
+		t.Errorf("inquiry: csw %+v data %q", csw, data)
 	}
 
-	// Verify stats
-	drives := sess.Drives()
-	if len(drives) != 1 {
-		t.Fatalf("drives count = %d, want 1", len(drives))
-	}
-	if drives[0].BytesRead != 36+2048 {
-		t.Errorf("BytesRead = %d, want %d", drives[0].BytesRead, 36+2048)
+	// READ CAPACITY: last LBA = 3, block size 2048.
+	bmc.cbw(2, 8, true, CmdReadCapacity10, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	data, _ = bmc.readResponse()
+	if binary.BigEndian.Uint32(data[0:4]) != 3 || binary.BigEndian.Uint32(data[4:8]) != 2048 {
+		t.Errorf("read capacity data % x", data)
 	}
 
-	// 3. Unmap and Close
-	if err := sess.Unmap(disk); err != nil {
-		t.Errorf("sess.Unmap failed: %v", err)
-	}
-	if err := sess.Close(); err != nil {
-		t.Errorf("sess.Close failed: %v", err)
+	// READ(10) one sector at LBA 1.
+	bmc.cbw(3, SectorSizeCD, true, CmdRead10, 0, 0, 0, 0, 1, 0, 0, 1, 0)
+	data, csw = bmc.readResponse()
+	if csw.Status != CSWStatusGood || len(data) != SectorSizeCD || data[0] != 0xCC {
+		t.Errorf("read: csw %+v len %d", csw, len(data))
 	}
 
-	select {
-	case <-sess.Done():
-	case <-time.After(1 * time.Second):
-		t.Error("sess.Done was not closed after Close()")
+	// Out-of-range READ(10) fails with residue = full length, no data.
+	bmc.cbw(4, SectorSizeCD, true, CmdRead10, 0, 0, 0, 0, 9, 0, 0, 1, 0)
+	data, csw = bmc.readResponse()
+	if csw.Status != CSWStatusCommandFail || len(data) != 0 || csw.Residue != SectorSizeCD {
+		t.Errorf("out-of-range read: csw %+v data %d", csw, len(data))
+	}
+
+	// The client sends keepalive requests (tag 0x04), not unsolicited 0x03.
+	if h, _ := bmc.read(); h.Tag != TagPingReq {
+		t.Errorf("keepalive tag 0x%02x, want 0x04", h.Tag)
+	}
+
+	// Close triggers a detach request.
+	go func() { _ = g.Close() }()
+	for {
+		h, _ := bmc.read()
+		if h.Tag == TagDetachReq {
+			break
+		}
+	}
+}
+
+func TestGroupDiskMultiFrameWrite(t *testing.T) {
+	g, conns := newGroupOverPipe(t, Credentials{Username: "tok", Password: "tok", IsSessionID: true})
+	img := &memImage{data: make([]byte, 8*SectorSizeDisk)}
+
+	mapErr := make(chan error, 1)
+	go func() {
+		_, err := g.Map(context.Background(), img, vmedia.MapOptions{Target: vmedia.TargetRemovable, Size: int64(len(img.data))})
+		mapErr <- err
+	}()
+	bmc := <-conns
+	bmc.handshake()
+	if err := <-mapErr; err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+
+	// WRITE(10): 2 sectors at LBA 3. Send the 1024 bytes split across two frames with a keepalive
+	// request interleaved, which the client must answer without corrupting the write.
+	bmc.cbw(7, 2*SectorSizeDisk, false, CmdWrite10, 0, 0, 0, 0, 3, 0, 0, 2, 0)
+	first := bytes.Repeat([]byte{0xA1}, SectorSizeDisk)
+	second := bytes.Repeat([]byte{0xB2}, SectorSizeDisk)
+	bmc.write(Header{Endpoint: EndpointBulkOut, Tag: TagEnqueue, PayloadLen: SectorSizeDisk}, first)
+	bmc.write(Header{Tag: TagPingResp, PayloadLen: 4}, []byte{0xFF, 0xFF, 0xFF, 0xFF})
+	bmc.write(Header{Endpoint: EndpointBulkOut, Tag: TagEnqueue, PayloadLen: SectorSizeDisk}, second)
+
+	_, csw := bmc.readResponse()
+	if csw.Status != CSWStatusGood {
+		t.Errorf("write CSW status %#x", csw.Status)
+	}
+	if !bytes.Equal(img.data[3*SectorSizeDisk:4*SectorSizeDisk], first) ||
+		!bytes.Equal(img.data[4*SectorSizeDisk:5*SectorSizeDisk], second) {
+		t.Error("multi-frame write did not reassemble correctly")
+	}
+}
+
+func TestGroupRejectsSecondDisk(t *testing.T) {
+	g, conns := newGroupOverPipe(t, Credentials{Username: "t", Password: "t", IsSessionID: true})
+	img := &memImage{data: make([]byte, 4*SectorSizeDisk)}
+	mapErr := make(chan error, 1)
+	go func() {
+		_, err := g.Map(context.Background(), img, vmedia.MapOptions{Target: vmedia.TargetRemovable, Size: int64(len(img.data))})
+		mapErr <- err
+	}()
+	(<-conns).handshake()
+	if err := <-mapErr; err != nil {
+		t.Fatalf("first Map: %v", err)
+	}
+	// A floppy also needs slot 1; the group must refuse it while removable holds the slot, without
+	// opening a second connection.
+	if _, err := g.Map(context.Background(), img, vmedia.MapOptions{Target: vmedia.TargetFloppy, Size: int64(len(img.data))}); err == nil {
+		t.Error("second disk-type drive was accepted")
 	}
 }

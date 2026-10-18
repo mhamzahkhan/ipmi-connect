@@ -3,291 +3,96 @@ package atenvm_test
 import (
 	"bytes"
 	"encoding/binary"
-	"net"
 	"testing"
 
 	"ipmi-connect/internal/atenvm"
 )
 
 func TestBuildDeviceSetupPacketCDROM(t *testing.T) {
-	opts := atenvm.SetupOptions{
-		Username:    "testtoken123456",
-		Password:    "testtoken123456",
-		IsSessionID: true,
-		PortIndex:   0,
-		Descriptors: atenvm.CDROMDescriptors(),
-		Encrypt:     true,
-		Nonce:       0x11223344,
-	}
-
-	h, wirePayload, err := atenvm.BuildDeviceSetupPacket(opts)
+	h, wire, err := atenvm.BuildDeviceSetupPacket(atenvm.SetupOptions{
+		Username: "testtoken123456", Password: "testtoken123456", IsSessionID: true,
+		PortIndex: 0, Class: atenvm.ClassCDROM, Descriptors: atenvm.CDROMDescriptors(),
+		Encrypt: true, Nonce: 0x11223344,
+	})
 	if err != nil {
-		t.Fatalf("BuildDeviceSetupPacket failed: %v", err)
+		t.Fatal(err)
 	}
-
-	if h.Tag != atenvm.TagDeviceSetupReq {
-		t.Errorf("Tag = 0x%02x, want 0x01", h.Tag)
+	if h.Tag != atenvm.TagDeviceSetupReq || h.Flags != atenvm.FlagEncrypted {
+		t.Errorf("header %+v", h)
 	}
-	if h.Flags != atenvm.FlagEncrypted {
-		t.Errorf("Flags = 0x%02x, want 0x80", h.Flags)
+	// The header declares only the 44-byte auth prefix; the descriptors follow on the wire.
+	if h.PayloadLen != 44 {
+		t.Errorf("PayloadLen = %d, want 44", h.PayloadLen)
 	}
-	if h.PayloadLen != 218 {
-		t.Errorf("PayloadLen = %d, want 218", h.PayloadLen)
+	if len(wire) != 44+174 {
+		t.Fatalf("wire payload = %d, want 218", len(wire))
 	}
-	if len(wirePayload) != 218 {
-		t.Fatalf("wirePayload length = %d, want 218", len(wirePayload))
-	}
-
-	// Decrypt payload to check contents
-	dec, err := atenvm.RC4CryptDefault(wirePayload)
+	dec, err := atenvm.RC4CryptDefault(wire)
 	if err != nil {
-		t.Fatalf("decrypt failed: %v", err)
+		t.Fatal(err)
 	}
-
-	user := string(bytes.TrimRight(dec[0:16], "\x00"))
-	if user != "testtoken123456" {
-		t.Errorf("user = %q, want testtoken123456", user)
+	if u := string(bytes.TrimRight(dec[0:16], "\x00")); u != "testtoken123456" {
+		t.Errorf("user = %q", u)
 	}
-
-	nonce := binary.BigEndian.Uint32(dec[36:40])
-	if nonce != 0x11223344 {
-		t.Errorf("nonce = 0x%08x, want 0x11223344", nonce)
+	if n := binary.BigEndian.Uint32(dec[36:40]); n != 0x11223344 {
+		t.Errorf("nonce = 0x%08x", n)
 	}
-
-	// Flags should be 0x83: bit 7 (session ID) + bit 1 (port index 0 -> port 1) + bit 0 (allocate)
-	if dec[40] != 0x83 {
+	if dec[40] != 0x83 { // session-id | desired-port(0->2) | allocate
 		t.Errorf("flags = 0x%02x, want 0x83", dec[40])
 	}
-
-	// Offset 79 (packet byte 87): CD-ROM subclass 0x05
-	if dec[79] != atenvm.SubClassSFF8070i {
-		t.Errorf("CD-ROM subclass = 0x%02x, want 0x05", dec[79])
+	if dec[41] != atenvm.ClassCDROM {
+		t.Errorf("class = 0x%02x, want CD-ROM", dec[41])
+	}
+	// Byte 0x57 of the packet (offset 79 of the payload) must be 0x05 for the X7SB3 to emulate a
+	// 2048-byte CD-ROM.
+	if dec[79] != 0x05 {
+		t.Errorf("packet byte 0x57 = 0x%02x, want 0x05 (CD-ROM)", dec[79])
 	}
 }
 
-func TestBuildDeviceSetupPacketDiskUserAccount(t *testing.T) {
-	opts := atenvm.SetupOptions{
-		Username:    "ADMIN",
-		Password:    "ADMIN",
-		IsSessionID: false,
-		PortIndex:   0,
-		Descriptors: atenvm.DiskDescriptors(),
-		Encrypt:     false,
-		Nonce:       0x55667788,
-	}
-
-	h, wirePayload, err := atenvm.BuildDeviceSetupPacket(opts)
+func TestBuildDeviceSetupPacketDiskCleartext(t *testing.T) {
+	h, wire, err := atenvm.BuildDeviceSetupPacket(atenvm.SetupOptions{
+		Username: "ADMIN", Password: "secret", IsSessionID: false,
+		PortIndex: 1, Class: atenvm.ClassRemovable, Descriptors: atenvm.DiskDescriptors(),
+		Encrypt: false, Nonce: 0x55667788,
+	})
 	if err != nil {
-		t.Fatalf("BuildDeviceSetupPacket failed: %v", err)
+		t.Fatal(err)
 	}
-
 	if h.Flags != 0x00 {
-		t.Errorf("Flags = 0x%02x, want 0x00 for unencrypted", h.Flags)
+		t.Errorf("flags = 0x%02x, want cleartext", h.Flags)
 	}
-
-	// For direct user account auth, bit 7 of flags is 0, so flags = 0x03
-	if wirePayload[40] != 0x03 {
-		t.Errorf("flags = 0x%02x, want 0x03", wirePayload[40])
+	if wire[40] != 0x05 { // no session bit | desired-port(1->4) | allocate
+		t.Errorf("flags byte = 0x%02x, want 0x05", wire[40])
 	}
-
-	// Offset 79 (packet byte 87): Disk subclass 0x06
-	if wirePayload[79] != atenvm.SubClassSCSI {
-		t.Errorf("Disk subclass = 0x%02x, want 0x06", wirePayload[79])
+	if wire[79] != 0x06 {
+		t.Errorf("packet byte 0x57 = 0x%02x, want 0x06 (disk)", wire[79])
 	}
 }
 
 func TestParseDeviceSetupResponse(t *testing.T) {
-	// Success response: 9 bytes
-	respOK := []byte{0x00, 0x79, 0xca, 0xd8, 0x1d, 0x00, 0x00, 0x00, 0x00}
-	status, sid, err := atenvm.ParseDeviceSetupResponse(respOK)
-	if err != nil {
-		t.Fatalf("unexpected error for OK response: %v", err)
+	status, sid, err := atenvm.ParseDeviceSetupResponse([]byte{0x00, 0x79, 0xca, 0xd8, 0x1d, 0, 0, 0, 0})
+	if err != nil || status != atenvm.StatusSetupOK || sid != 0x1DD8CA79 {
+		t.Errorf("OK: status=%#x sid=%#x err=%v", status, sid, err)
 	}
-	if status != atenvm.StatusSetupOK {
-		t.Errorf("status = 0x%02x, want 0x00", status)
+	if _, _, err := atenvm.ParseDeviceSetupResponse([]byte{0x01, 0, 0, 0, 0, 0, 0, 0, 0}); err == nil {
+		t.Error("want error for auth-fail status")
 	}
-	if sid != 0x1DD8CA79 {
-		t.Errorf("session ID = 0x%08x, want 0x1DD8CA79", sid)
-	}
-
-	// Error response: Auth Failed (status 1)
-	respFail := []byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-	_, _, err = atenvm.ParseDeviceSetupResponse(respFail)
-	if err == nil {
-		t.Error("expected error for status 0x01, got nil")
-	}
-
-	// Short response
-	_, _, err = atenvm.ParseDeviceSetupResponse([]byte{0x00})
-	if err == nil {
-		t.Error("expected error for short response, got nil")
+	if _, _, err := atenvm.ParseDeviceSetupResponse([]byte{0x00}); err == nil {
+		t.Error("want error for short response")
 	}
 }
 
-func TestMockBMCHandshake(t *testing.T) {
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
-
-	done := make(chan struct{})
-
-	// Mock BMC server loop
-	go func() {
-		defer close(done)
-
-		// 1. Read Device Setup Request (Tag 0x01)
-		h, payload, err := atenvm.ReadFrame(server)
-		if err != nil {
-			t.Errorf("BMC: ReadFrame(SetupReq) failed: %v", err)
-			return
-		}
-		if h.Tag != atenvm.TagDeviceSetupReq || h.Flags != atenvm.FlagEncrypted {
-			t.Errorf("BMC: unexpected setup header: %+v", h)
-			return
-		}
-		dec, err := atenvm.RC4CryptDefault(payload)
-		if err != nil {
-			t.Errorf("BMC: decrypt failed: %v", err)
-			return
-		}
-		if len(dec) != 218 {
-			t.Errorf("BMC: payload length = %d, want 218", len(dec))
-			return
-		}
-
-		// 2. Reply with Device Setup Response (Tag 0x02, status 0, sid 0x12345678)
-		respPayload := []byte{0x00, 0x78, 0x56, 0x34, 0x12, 0x00, 0x00, 0x00, 0x00}
-		hResp := atenvm.Header{
-			Endpoint:   atenvm.EndpointControl,
-			Flags:      0x00,
-			DevPort:    0x00,
-			Tag:        atenvm.TagDeviceSetupResp,
-			PayloadLen: uint32(len(respPayload)),
-		}
-		if err := atenvm.WriteFrame(server, hResp, respPayload); err != nil {
-			t.Errorf("BMC: WriteFrame(SetupResp) failed: %v", err)
-			return
-		}
-
-		// 3. Read EP Setup (Tag 0x07)
-		hEP, epPayload, err := atenvm.ReadFrame(server)
-		if err != nil {
-			t.Errorf("BMC: ReadFrame(EPSetup) failed: %v", err)
-			return
-		}
-		if hEP.Tag != atenvm.TagEPSetup || len(epPayload) != 8 {
-			t.Errorf("BMC: unexpected EP setup: %+v %v", hEP, epPayload)
-			return
-		}
-
-		// 4. Send Keepalive Ping Request (Tag 0x04)
-		hPing := atenvm.Header{
-			Endpoint:   atenvm.EndpointControl,
-			Flags:      0x00,
-			DevPort:    0x00,
-			Tag:        atenvm.TagPingReq,
-			PayloadLen: 4,
-		}
-		if err := atenvm.WriteFrame(server, hPing, []byte{0xde, 0xad, 0xbe, 0xef}); err != nil {
-			t.Errorf("BMC: WriteFrame(PingReq) failed: %v", err)
-			return
-		}
-
-		// 5. Read Keepalive Ping Response (Tag 0x03)
-		hPong, pongPayload, err := atenvm.ReadFrame(server)
-		if err != nil {
-			t.Errorf("BMC: ReadFrame(PingResp) failed: %v", err)
-			return
-		}
-		if hPong.Tag != atenvm.TagPingResp || !bytes.Equal(pongPayload, []byte{0xde, 0xad, 0xbe, 0xef}) {
-			t.Errorf("BMC: unexpected Ping response: %+v %v", hPong, pongPayload)
-			return
-		}
-
-		// 6. Read Detach Request (Tag 0x05)
-		hDetach, _, err := atenvm.ReadFrame(server)
-		if err != nil {
-			t.Errorf("BMC: ReadFrame(DetachReq) failed: %v", err)
-			return
-		}
-		if hDetach.Tag != atenvm.TagDetachReq {
-			t.Errorf("BMC: unexpected detach header: %+v", hDetach)
-			return
-		}
-
-		// 7. Send Detach Response (Tag 0x06)
-		hDetachResp := atenvm.Header{
-			Endpoint:   atenvm.EndpointControl,
-			Flags:      0x00,
-			DevPort:    0x00,
-			Tag:        atenvm.TagDetachResp,
-			PayloadLen: 1,
-		}
-		_ = atenvm.WriteFrame(server, hDetachResp, []byte{0x00})
-	}()
-
-	// Client execution:
-	// 1. Send Setup Request
-	hSetup, setupPayload, err := atenvm.BuildDeviceSetupPacket(atenvm.SetupOptions{
-		Username:    "token123",
-		Password:    "token123",
-		IsSessionID: true,
-		Encrypt:     true,
-	})
-	if err != nil {
-		t.Fatalf("build setup failed: %v", err)
+func TestKeepaliveAndDetachBuilders(t *testing.T) {
+	h, p := atenvm.BuildKeepaliveRequest()
+	if h.Tag != atenvm.TagPingReq {
+		t.Errorf("keepalive request tag = 0x%02x, want 0x04", h.Tag)
 	}
-	if err := atenvm.WriteFrame(client, hSetup, setupPayload); err != nil {
-		t.Fatalf("send setup failed: %v", err)
+	if len(p) != 4 || h.PayloadLen != 4 {
+		t.Errorf("keepalive payload len %d", len(p))
 	}
-
-	// 2. Read Setup Response
-	hResp, respPayload, err := atenvm.ReadFrame(client)
-	if err != nil {
-		t.Fatalf("read setup response failed: %v", err)
+	hd, pd := atenvm.BuildDetachPacket()
+	if hd.Tag != atenvm.TagDetachReq || len(pd) != 0 {
+		t.Errorf("detach %+v %v", hd, pd)
 	}
-	if hResp.Tag != atenvm.TagDeviceSetupResp {
-		t.Fatalf("unexpected setup response tag: 0x%02x", hResp.Tag)
-	}
-	status, sid, err := atenvm.ParseDeviceSetupResponse(respPayload)
-	if err != nil || status != 0 || sid != 0x12345678 {
-		t.Fatalf("parse setup response failed: status=%d, sid=0x%08x, err=%v", status, sid, err)
-	}
-
-	// 3. Send EP Setup
-	hEP, epPayload := atenvm.BuildEPSetupPacket()
-	if err := atenvm.WriteFrame(client, hEP, epPayload); err != nil {
-		t.Fatalf("send EP setup failed: %v", err)
-	}
-
-	// 4. Read Ping Request from BMC and reply
-	hPing, pingPayload, err := atenvm.ReadFrame(client)
-	if err != nil {
-		t.Fatalf("read ping failed: %v", err)
-	}
-	if hPing.Tag != atenvm.TagPingReq {
-		t.Fatalf("unexpected ping tag: 0x%02x", hPing.Tag)
-	}
-	token := binary.LittleEndian.Uint32(pingPayload)
-	hPong, pongPayload := atenvm.BuildKeepalivePacket(token)
-	if err := atenvm.WriteFrame(client, hPong, pongPayload); err != nil {
-		t.Fatalf("send keepalive response failed: %v", err)
-	}
-
-	// 5. Send Detach Request
-	hDetach, detachPayload := atenvm.BuildDetachPacket(1)
-	if err := atenvm.WriteFrame(client, hDetach, detachPayload); err != nil {
-		t.Fatalf("send detach failed: %v", err)
-	}
-
-	// 6. Read Detach Response
-	hDetachResp, _, err := atenvm.ReadFrame(client)
-	if err != nil {
-		t.Fatalf("read detach response failed: %v", err)
-	}
-	if hDetachResp.Tag != atenvm.TagDetachResp {
-		t.Fatalf("unexpected detach response tag: 0x%02x", hDetachResp.Tag)
-	}
-
-	<-done
 }
