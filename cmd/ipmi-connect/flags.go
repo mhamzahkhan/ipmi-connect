@@ -16,6 +16,9 @@ type options struct {
 	WebPort   int
 	NoBrowser bool
 	ShowHelp  bool
+	// PortIgnored records a --port flag: accepted for compatibility with older launchers, but
+	// BMC ports come from the protocol.
+	PortIgnored bool
 }
 
 const defaultWebPort = 8080
@@ -92,10 +95,10 @@ func parseArgs(args []string) options {
 		case strings.HasPrefix(arg, "--web-port="):
 			setPort(strings.TrimPrefix(arg, "--web-port="))
 		case arg == "--port" || arg == "-port":
-			// Accepted for compatibility but unused: BMC ports come from the protocol.
 			next(&i)
+			o.PortIgnored = true
 		case strings.HasPrefix(arg, "--port="):
-			// Accepted for compatibility but unused.
+			o.PortIgnored = true
 		case !strings.HasPrefix(arg, "-"):
 			if o.Host == "" {
 				o.Host = arg

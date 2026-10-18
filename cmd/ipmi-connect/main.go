@@ -22,6 +22,9 @@ func main() {
 		printUsage()
 		os.Exit(0)
 	}
+	if opts.PortIgnored {
+		log.Printf("Ignoring --port: BMC ports are fixed by each vendor's protocol. Use --web-port for the local console.")
+	}
 
 	user, password, err := resolveCredentials(opts, os.Getenv, bmc.ReadPassword)
 	if err != nil {

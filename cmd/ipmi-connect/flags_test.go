@@ -37,7 +37,8 @@ func TestParseArgs(t *testing.T) {
 			with(func(o *options) { o.Host, o.NoBrowser = "h", true }),
 		},
 		{"invalid web port keeps default", []string{"h", "--web-port", "abc"}, with(func(o *options) { o.Host = "h" })},
-		{"--port value is consumed, not taken as host", []string{"--port", "623", "h"}, with(func(o *options) { o.Host = "h" })},
+		{"--port value is consumed, not taken as host", []string{"--port", "623", "h"}, with(func(o *options) { o.Host, o.PortIgnored = "h", true })},
+		{"--port= is noted as ignored", []string{"h", "--port=623"}, with(func(o *options) { o.Host, o.PortIgnored = "h", true })},
 		{"help", []string{"-h"}, with(func(o *options) { o.ShowHelp = true })},
 	}
 
