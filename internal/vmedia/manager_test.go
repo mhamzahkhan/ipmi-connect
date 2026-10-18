@@ -202,9 +202,8 @@ func TestMapUnmapLifecycle(t *testing.T) {
 	if err := m.MapImage(img.ID, bmc.TargetFloppy); err != nil {
 		t.Fatalf("map floppy: %v", err)
 	}
-	if got := b.mapped(); !got[0] || !got[2] {
-		t.Errorf("BMC mapped %v, want drives 0 (CD) and 2 (floppy)", got)
-	}
+	// The fake BMC records a map after reading it off the pipe, so it can trail MapImage.
+	waitFor(t, "CD and floppy map", func() bool { got := b.mapped(); return got[0] && got[2] })
 	st := m.MediaStatus()
 	if len(st.Drives) != 2 || st.Images[0].MappedTo != bmc.TargetCD || st.Images[1].MappedTo != bmc.TargetFloppy {
 		t.Errorf("status %+v", st)
