@@ -15,8 +15,8 @@ const (
 )
 
 // Device class selectors (Device Setup prefix byte 41). Values from the X7SB3's own client
-// library; the byte is passed to the BMC's UDC ioctl. UNVERIFIED on live hardware — the one
-// decoded X10 capture used 0x03 for a CD, so confirm CD==4 on the X7SB3 during bring-up.
+// library; the byte is passed to the BMC's UDC ioctl. CD==4 is confirmed on the X7SB3 (the one
+// decoded X10 capture used 0x03 for a CD).
 const (
 	ClassRemovable byte = 0x01
 	ClassFloppy    byte = 0x02

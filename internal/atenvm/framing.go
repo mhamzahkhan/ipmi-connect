@@ -31,8 +31,8 @@ const (
 	TagEnqueueAndGo    byte = 0xFF // Endpoint transfer enqueue and flush (CSW)
 	TagDeviceSetupReq  byte = 0x01 // Client -> BMC: authenticate & plug in device
 	TagDeviceSetupResp byte = 0x02 // BMC -> Client: setup result (0x00 = OK)
-	TagPingResp        byte = 0x03 // Client -> BMC: keepalive response / ping reply
-	TagPingReq         byte = 0x04 // BMC -> Client: keepalive ping request
+	TagPingResp        byte = 0x03 // Keepalive reply (the BMC answers the client's 0x04 with this)
+	TagPingReq         byte = 0x04 // Keepalive request (the client sends these every 10 s)
 	TagDetachReq       byte = 0x05 // Client -> BMC: detach / unmount virtual device
 	TagDetachResp      byte = 0x06 // BMC -> Client: detach acknowledged
 	TagEPSetup         byte = 0x07 // Client -> BMC: configure USB endpoints

@@ -68,6 +68,9 @@ func (s *deviceSession) open(ctx context.Context, o setupOpts) error {
 		deadline = d
 	}
 	_ = s.conn.SetDeadline(deadline)
+	// Cancelling ctx (an eject while plugging in) unblocks the setup I/O at once.
+	stopCancel := context.AfterFunc(ctx, func() { _ = s.conn.SetDeadline(time.Now()) })
+	defer stopCancel()
 
 	hSetup, setupPayload, err := BuildDeviceSetupPacket(SetupOptions{
 		Username: o.username, Password: o.password, IsSessionID: o.isSessionID,
@@ -96,6 +99,9 @@ func (s *deviceSession) open(ctx context.Context, o setupOpts) error {
 	hEP, epPayload := BuildEPSetupPacket()
 	if err := WriteFrame(s.conn, hEP, epPayload); err != nil {
 		return fmt.Errorf("send EP setup: %w", err)
+	}
+	if !stopCancel() {
+		return ctx.Err() // cancelled just as setup finished; the deadline is already poisoned
 	}
 	_ = s.conn.SetDeadline(time.Time{})
 

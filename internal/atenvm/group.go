@@ -33,6 +33,7 @@ type Group struct {
 
 	mu        sync.Mutex
 	devices   map[uint16]*deviceSession
+	plugging  map[uint16]bool // drives between the slot check and the end of setup
 	lastEvent string
 	closed    bool
 	done      chan struct{}
@@ -42,7 +43,10 @@ var _ vmedia.Session = (*Group)(nil)
 
 // NewGroup returns a Group that opens a fresh connection (with fresh credentials) per mapped drive.
 func NewGroup(connect Connector) *Group {
-	return &Group{connect: connect, devices: map[uint16]*deviceSession{}, done: make(chan struct{})}
+	return &Group{
+		connect: connect, devices: map[uint16]*deviceSession{}, plugging: map[uint16]bool{},
+		done: make(chan struct{}),
+	}
 }
 
 // SetKeepaliveInterval overrides the keepalive cadence (used in tests).
@@ -76,49 +80,67 @@ func (g *Group) Map(ctx context.Context, img vmedia.Image, opts vmedia.MapOption
 		return 0, err
 	}
 	disk := uint16(opts.Target)
+	if err := g.reserve(disk, port, opts.Target); err != nil {
+		return 0, err
+	}
+	ds, err := g.plugIn(ctx, drive, disk, setupOpts{portIndex: port, class: class, descriptors: descriptors})
 
 	g.mu.Lock()
-	if g.closed {
-		g.mu.Unlock()
-		return 0, errors.New("virtual media session is closed")
-	}
-	if _, exists := g.devices[disk]; exists {
-		g.mu.Unlock()
-		return 0, fmt.Errorf("%s drive is already mapped", opts.Target)
-	}
-	// The firmware has two slots: at most one CD and one disk at a time.
-	if port == 1 {
-		for d := range g.devices {
-			if d != uint16(vmedia.TargetCD) {
-				g.mu.Unlock()
-				return 0, errors.New("only one floppy or removable drive can be mapped at a time")
-			}
-		}
+	delete(g.plugging, disk)
+	closed := g.closed
+	if err == nil && !closed {
+		g.devices[disk] = ds
 	}
 	g.mu.Unlock()
+	if err != nil {
+		return 0, err
+	}
+	if closed { // Close ran while the drive was plugging in
+		ds.close()
+		return 0, errors.New("virtual media session is closed")
+	}
+	log.Printf("[Supermicro] Virtual media: %s attached", opts.Target)
+	return disk, nil
+}
 
+// reserve claims the drive's slot until Map finishes. The firmware has two slots: at most one CD
+// and one disk (floppy or removable) at a time.
+func (g *Group) reserve(disk uint16, port byte, t vmedia.Target) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed {
+		return errors.New("virtual media session is closed")
+	}
+	taken := func(d uint16) bool { return g.devices[d] != nil || g.plugging[d] }
+	if taken(disk) {
+		return fmt.Errorf("%s drive is already mapped", t)
+	}
+	if port == 1 && (taken(uint16(vmedia.TargetRemovable)) || taken(uint16(vmedia.TargetFloppy))) {
+		return errors.New("only one floppy or removable drive can be mapped at a time")
+	}
+	g.plugging[disk] = true
+	return nil
+}
+
+// plugIn opens a connection with fresh credentials and plugs the drive in on it.
+func (g *Group) plugIn(ctx context.Context, drive *vmedia.Drive, disk uint16, o setupOpts) (*deviceSession, error) {
 	conn, creds, err := g.connect(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("connect virtual media: %w", err)
+		return nil, fmt.Errorf("connect virtual media: %w", err)
 	}
-
 	g.mu.Lock()
 	keepalive := g.keepalive
 	g.mu.Unlock()
 	ds := newDeviceSession(conn, drive, disk, keepalive)
-	if err := ds.open(ctx, setupOpts{
-		username: creds.Username, password: creds.Password, isSessionID: creds.IsSessionID,
-		portIndex: port, class: class, descriptors: descriptors, encrypt: creds.Encrypt,
-	}); err != nil {
+	o.username, o.password, o.isSessionID, o.encrypt = creds.Username, creds.Password, creds.IsSessionID, creds.Encrypt
+	if err := ds.open(ctx, o); err != nil {
 		_ = conn.Close()
-		return 0, fmt.Errorf("plug in %s drive: %w", opts.Target, err)
+		if ctx.Err() != nil {
+			err = ctx.Err() // report the cancellation, not the I/O error it caused
+		}
+		return nil, fmt.Errorf("plug in %s drive: %w", drive.Target, err)
 	}
-
-	g.mu.Lock()
-	g.devices[disk] = ds
-	g.mu.Unlock()
-	log.Printf("[Supermicro] Virtual media: %s attached", opts.Target)
-	return disk, nil
+	return ds, nil
 }
 
 // Unmap detaches one drive.

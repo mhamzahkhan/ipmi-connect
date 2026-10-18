@@ -379,3 +379,63 @@ func TestRefusedWriteIsDrainedAndSessionSurvives(t *testing.T) {
 		t.Error("read-only image was written")
 	}
 }
+
+func TestCancelledMapStopsWaitingForSetup(t *testing.T) {
+	g, conns := newGroupOverPipe(t, Credentials{Username: "t", Password: "t", IsSessionID: true})
+	img := &memImage{data: make([]byte, 4*SectorSizeCD)}
+	ctx, cancel := context.WithCancel(context.Background())
+	mapErr := make(chan error, 1)
+	go func() {
+		_, err := g.Map(ctx, img, vmedia.MapOptions{Target: vmedia.TargetCD, Size: int64(len(img.data))})
+		mapErr <- err
+	}()
+	<-conns // connected; this BMC never answers the setup
+	cancel()
+	select {
+	case err := <-mapErr:
+		if err == nil {
+			t.Fatal("cancelled Map succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Map kept waiting for setup after its context was cancelled")
+	}
+}
+
+func TestMapFinishingAfterCloseIsUnplugged(t *testing.T) {
+	g, conns := newGroupOverPipe(t, Credentials{Username: "t", Password: "t", IsSessionID: true})
+	img := &memImage{data: make([]byte, 4*SectorSizeCD)}
+	mapErr := make(chan error, 1)
+	go func() {
+		_, err := g.Map(context.Background(), img, vmedia.MapOptions{Target: vmedia.TargetCD, Size: int64(len(img.data))})
+		mapErr <- err
+	}()
+	bmc := <-conns
+	_ = g.Close() // while the drive is still being plugged in
+	bmc.handshake()
+	if h, _ := bmc.read(); h.Tag != TagDetachReq {
+		t.Errorf("BMC got tag 0x%02x, want a detach", h.Tag)
+	}
+	if err := <-mapErr; err == nil {
+		t.Fatal("Map succeeded on a closed group")
+	}
+	if d := g.Drives(); len(d) != 0 {
+		t.Errorf("closed group lists drives %+v", d)
+	}
+}
+
+func TestSecondDiskRefusedWhileFirstIsPlugging(t *testing.T) {
+	g, conns := newGroupOverPipe(t, Credentials{Username: "t", Password: "t", IsSessionID: true})
+	img := &memImage{data: make([]byte, 4*SectorSizeDisk)}
+	go func() {
+		_, _ = g.Map(context.Background(), img, vmedia.MapOptions{Target: vmedia.TargetRemovable, Size: int64(len(img.data))})
+	}()
+	<-conns // the removable drive holds slot 1 but has not finished setup
+	if _, err := g.Map(context.Background(), img, vmedia.MapOptions{Target: vmedia.TargetFloppy, Size: int64(len(img.data))}); err == nil {
+		t.Fatal("floppy accepted while the removable drive was plugging in")
+	}
+	select {
+	case <-conns:
+		t.Error("the refused floppy opened a connection")
+	default:
+	}
+}
