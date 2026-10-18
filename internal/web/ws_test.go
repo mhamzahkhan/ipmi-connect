@@ -12,7 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 func startTestServer(t *testing.T, console bmc.Console) (*Server, string) {
@@ -143,7 +143,10 @@ func TestRunReleasesHeldInputBeforeReturning(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run: %v", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return")
 	}
