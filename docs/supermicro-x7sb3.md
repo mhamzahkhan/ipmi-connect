@@ -38,41 +38,23 @@
 
 ---
 
-## 2. Pack200 (.jar.pack.gz) Packaging & Modern Decompression
-
-The BMC flash does **not** store `.jar` files. When requesting `iKVM__V1.69.21.0x0.jar`, the server returns `HTTP 404`.
-Instead, the files are stored as JSR-200 Pack200 compressed archives with extension `.jar.pack.gz`:
-- `iKVM__V1.69.21.0x0.jar.pack.gz` (152,936 bytes)
-- `libmac_x86_64__V1.0.5.jar.pack.gz` (159,194 bytes)
-- `liblinux_x86_64__V1.0.5.jar.pack.gz` (162,503 bytes)
-- `libwin_x86_64__V1.0.5.jar.pack.gz` (218,534 bytes)
-- `SOL__V0.5.11.jar.pack.gz` (140,781 bytes)
-
-### 2.1 The Modern Java Incompatibility
-1. Java 14+ removed `unpack200` from the JDK.
-2. The Pack200 streams use format version `160.1` (`0xCAFED00D`), which incorporates classfile `StackMapTable` attributes.
-3. Standard third-party unpackers (e.g. Apache Commons Compress) throw `Pack200Exception: Corrupt study on StackMapTable attribute`.
-4. **Clean Solution**: The OpenJDK 11 internal driver (`com.sun.java.util.jar.pack.Driver`) unpacked all archives with `--patch-module java.base`, producing standard `.jar` files.
-
----
-
-## 3. ATEN iKVM Wire Protocol (Port 5900)
+## 2. ATEN iKVM Wire Protocol (Port 5900)
 
 Remote console video and mouse/keyboard redirection run on **TCP Port 5900** using an extended RFB (Remote Frame Buffer / VNC) protocol.
 
-### 3.1 Initial Version Exchange
+### 2.1 Initial Version Exchange
 1. Server sends 12 ASCII bytes:
    ```text
    RFB 003.008\n
    ```
 2. Client echoes back the exact 12 ASCII bytes.
 
-### 3.2 Security Negotiation
+### 2.2 Security Negotiation
 1. Server sends 1 byte: number of supported security types (e.g., `1`).
 2. Server sends that number of bytes: each byte is a supported security code (e.g., `0x01` = None, `0x02` = VNC auth, `0x10` = ATEN auth).
 3. Client replies with 1 byte selecting the chosen security type.
 
-### 3.3 ATEN Extended Authentication
+### 2.3 ATEN Extended Authentication
 1. Server sends a 24-byte random challenge nonce.
 2. Client sends 24 bytes of username (padded with `0x00`).
 3. Client sends 24 bytes of authentication response / session token (padded with `0x00`).
@@ -81,7 +63,7 @@ Remote console video and mouse/keyboard redirection run on **TCP Port 5900** usi
    - `0x00000000`: Authentication Success!
    - Non-zero: Authentication failed, followed by error message length and string.
 
-### 3.4 Client & Server Initialization
+### 2.4 Client & Server Initialization
 1. Client sends 1 byte `shared-flag` (`0x00` = exclusive console, `0x01` = shared console).
 2. Server responds with `ServerInit` structure:
    - `width`: uint16 big-endian (e.g. 1024)
@@ -90,7 +72,7 @@ Remote console video and mouse/keyboard redirection run on **TCP Port 5900** usi
    - `name_length`: uint32 big-endian
    - `name_string`: Server name string (ASCII)
 
-### 3.5 Video Frame Streaming & Tile Compression
+### 2.5 Video Frame Streaming & Tile Compression
 ATEN firmware transmits tile-based updates:
 - Message type `0` = FramebufferUpdate.
 - Rectangle headers describe changed tile regions `(x, y, w, h)` and encoding type.
@@ -98,16 +80,16 @@ ATEN firmware transmits tile-based updates:
 
 ---
 
-## 4. Virtual Media & Power Control Architecture
+## 3. Virtual Media & Power Control Architecture
 
-### 4.1 Virtual Storage (USB Mass Storage Emulation)
+### 3.1 Virtual Storage (USB Mass Storage Emulation)
 Supermicro ATEN BMC supports virtual media through two mechanisms:
 1. **USB Redirection over RMCP/TCP Port 623**:
-   The native library `tw.com.aten.vstorage.VirtualStorage` binds to the host's virtual USB controller via RMCP encapsulation.
+   The vendor viewer's native virtual storage library carries USB mass-storage traffic to the BMC over TCP port 623.
 2. **CIFS/HTTP ISO Share Mount**:
    The BMC web server exposes `/cgi/virtual_media_share_img.cgi` where the BMC mounts an ISO or floppy image from a network share or HTTP server directly into the host BIOS virtual CD/DVD-ROM.
 
-### 4.2 Power Control Endpoints
+### 3.2 Power Control Endpoints
 - **URL**: `POST https://<bmc>/cgi/power_ctrl.cgi`
 - **Body**: `web_power_control=<code>` (form-encoded), with the session cookies and referer from §1.3
 - **Codes** (as sent by `ipmi-connect`; not yet confirmed against the live BMC):

@@ -6,7 +6,7 @@ import (
 )
 
 // Client-to-server ATEN iKVM messages. Layouts follow the X7SB3's own client library
-// (iKVM__V1.69.21, decompiled) and agree with smkvm's live-verified encoders.
+// and agree with smkvm's live-verified encoders.
 
 // Power codes for the in-band power message (0x1a).
 const (

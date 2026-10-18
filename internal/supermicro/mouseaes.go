@@ -6,7 +6,7 @@ import (
 )
 
 // The vendor client encrypts mouse events with AES-128-CBC under a fixed key and IV
-// (RFB_AES128_EventCryto in the X7SB3's iKVM library). They are the NIST SP 800-38A example
+// (found in the X7SB3's viewer library). They are the NIST SP 800-38A example
 // values: this is obfuscation, not security.
 var (
 	mouseKey = [16]byte{0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c}

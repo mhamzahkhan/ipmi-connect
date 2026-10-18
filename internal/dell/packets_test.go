@@ -75,7 +75,7 @@ func TestBeefPacketEncoding(t *testing.T) {
 }
 
 // The browser sends the RFB/X11 convention (left 1, middle 2, right 4); Avocent's viewer
-// builds left 1, right 2, middle 4 (com.avocent.kvm.b.h).
+// builds left 1, right 2, middle 4.
 func TestAvocentButtonMask(t *testing.T) {
 	tests := []struct {
 		name string

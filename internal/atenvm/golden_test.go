@@ -20,8 +20,8 @@ func (p *patternReader) ReadAt(b []byte, off int64) (int, error) {
 }
 func (p *patternReader) WriteAt(b []byte, off int64) (int, error) { return len(b), nil }
 
-// These response bytes are from the RC4-decrypted USBAnywhere capture (see
-// notes/supermicro-vmedia-capture-decode.md Appendix B); they are the regression fixtures.
+// These response bytes are from the RC4-decrypted capture published with Eclypsium's USBAnywhere
+// research (github.com/eclypsium/USBAnywhere); they are the regression fixtures.
 func TestCDGoldenResponses(t *testing.T) {
 	const sectors = 8192
 	drive, err := vmedia.NewDrive(&patternReader{size: sectors * atenvm.SectorSizeCD},

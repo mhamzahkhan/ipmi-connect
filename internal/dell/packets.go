@@ -2,23 +2,23 @@ package dell
 
 import "encoding/binary"
 
-// Avocent packet IDs. Letters in comments are the obfuscated class names in avctKVM.jar.
+// Avocent packet IDs.
 const (
-	pktVideoAck      uint16 = 0      // eb: client -> video channel, acknowledges one ib packet
-	pktVideoAuth     uint16 = 1      // dc: client -> video channel, authenticates with the session token
-	pktVideoAuthResp uint16 = 132    // ac: video channel -> client
-	pktVideoFrame    uint16 = 134    // ib: video channel -> client, ASPEED bitstream (magic 0xDEADBEEF)
-	pktControlAuth   uint16 = 258    // cb: client -> control channel, one-time JNLP credentials
-	pktKey           uint16 = 512    // e:  USB HID key press/release
-	pktPointer       uint16 = 513    // jc: absolute mouse position and buttons
-	pktScreenRefresh uint16 = 769    // o:  "ScreenRefresh", forces a full-frame resend
-	pktSetResolution uint16 = 770    // y:  "Set Display Area"
-	pktSetScale1to1  uint16 = 772    // p:  "SetScaleMode1to1", sent once when enabling video
-	pktEnableVideo   uint16 = 782    // fb
-	pktHeartbeat     uint16 = 0x0400 // q:  keeps the 30s control-channel watchdog quiet
+	pktVideoAck      uint16 = 0      // client -> video channel, acknowledges one video frame
+	pktVideoAuth     uint16 = 1      // client -> video channel, authenticates with the session token
+	pktVideoAuthResp uint16 = 132    // video channel -> client
+	pktVideoFrame    uint16 = 134    // video channel -> client, ASPEED bitstream (magic 0xDEADBEEF)
+	pktControlAuth   uint16 = 258    // client -> control channel, one-time JNLP credentials
+	pktKey           uint16 = 512    // USB HID key press/release
+	pktPointer       uint16 = 513    // absolute mouse position and buttons
+	pktScreenRefresh uint16 = 769    // forces a full-frame resend
+	pktSetResolution uint16 = 770    // sets the display area
+	pktSetScale1to1  uint16 = 772    // 1:1 scaling, sent once when enabling video
+	pktEnableVideo   uint16 = 782    // turns the video stream on
+	pktHeartbeat     uint16 = 0x0400 // keeps the 30s control-channel watchdog quiet
 
-	pktRequestVMCredentials uint16 = 0x0427 // s: asks for one-time virtual media tokens (payload u32 30)
-	pktVMCredentials        uint16 = 0x8434 // k: user and password tokens, 32 bytes each, NUL-padded
+	pktRequestVMCredentials uint16 = 0x0427 // asks for one-time virtual media tokens (payload u32 30)
+	pktVMCredentials        uint16 = 0x8434 // user and password tokens, 32 bytes each, NUL-padded
 )
 
 // APCP channel modes sent in the 53-byte greeting.
@@ -28,16 +28,16 @@ const (
 	channelModeVMedia  byte = 2 // AVMP virtual media
 )
 
-// serverPacketNames are the class names decrypted from the C6220's viewer, for logging.
+// serverPacketNames describe server packets in log lines.
 var serverPacketNames = map[uint16]string{
-	0x8102: "MouseAccelResponse",
-	0x8200: "Input Resolution Response",
-	0x8202: "VideoSetupData",
-	0x8204: "DVCColorModeResponse",
-	0x8300: "User Login Response",
-	0x8401: "SharingRequest",
-	0x8431: "SelectedServerUpdate",
-	0x8434: "RequestCredentialsMessage",
+	0x8102: "mouse acceleration reply",
+	0x8200: "input resolution reply",
+	0x8202: "video setup",
+	0x8204: "colour mode reply",
+	0x8300: "login reply",
+	0x8401: "session sharing request",
+	0x8431: "selected server update",
+	0x8434: "virtual media credentials",
 }
 
 func packetName(id uint16) string {

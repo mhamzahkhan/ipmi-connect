@@ -3,6 +3,6 @@
 //
 // The BMC emulates the USB mass-storage device and SCSI itself and asks the client only for
 // blocks, so serving an ISO is a matter of answering block reads. The layouts follow the vendor's
-// avctVM.jar (see the research notes, dell-avmp-virtual-media.md). Reaching an AVMP-ready socket
+// virtual media client. Reaching an AVMP-ready socket
 // (APCP greeting with mode 2, TLS) and minting credentials is the caller's job.
 package avmp

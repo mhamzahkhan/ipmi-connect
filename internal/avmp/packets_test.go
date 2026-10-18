@@ -22,7 +22,7 @@ func header(typ uint16, n int) []byte {
 	return binary.BigEndian.AppendUint16(b, typ)
 }
 
-// Layouts from avctVM.jar's ApplianceSession.cmd* and VirtualMedia.login (notes/dell-avmp-virtual-media.md).
+// Layouts from the vendor's virtual media client.
 func TestEncoders(t *testing.T) {
 	tests := []struct {
 		name string

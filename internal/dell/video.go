@@ -7,10 +7,9 @@ import (
 	"time"
 )
 
-// VideoPacket is one ib packet: an ASPEED bitstream that updates the whole frame.
+// VideoPacket is one video frame packet: an ASPEED bitstream that updates the whole frame.
 //
-// Field meanings follow the C6220's own viewer (com.avocent.kvm.b.a.ib and the decoder in
-// com.avocent.kvm.a.a): the bitstream always describes the full Width x Height frame, drawn at
+// Field meanings follow the C6220's own viewer: the bitstream always describes the full Width x Height frame, drawn at
 // the origin; bytes 1-3 carry the hardware cursor position, not a tile offset.
 type VideoPacket struct {
 	CursorX        uint16
