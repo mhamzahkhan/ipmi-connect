@@ -56,22 +56,24 @@ func (g *Group) SetKeepaliveInterval(d time.Duration) {
 	g.mu.Unlock()
 }
 
-// slotFor maps a drive target to its device class, port index and USB descriptors.
-func slotFor(t vmedia.Target) (class, port byte, descriptors []byte, err error) {
+// slotFor maps a drive target to its device class and USB descriptors. Every drive asks for port
+// index 0: the BMC picks the free slot itself, and on the X7SB3 a drive set up with port 1 stalls
+// the host right after INQUIRY.
+func slotFor(t vmedia.Target) (class byte, descriptors []byte, err error) {
 	switch t {
 	case vmedia.TargetCD:
-		return ClassCDROM, 0, CDROMDescriptors(), nil
+		return ClassCDROM, CDROMDescriptors(), nil
 	case vmedia.TargetRemovable:
-		return ClassRemovable, 1, DiskDescriptors(), nil
+		return ClassRemovable, DiskDescriptors(), nil
 	case vmedia.TargetFloppy:
-		return ClassFloppy, 1, DiskDescriptors(), nil
+		return ClassFloppy, DiskDescriptors(), nil
 	}
-	return 0, 0, nil, fmt.Errorf("unsupported virtual media target %s", t)
+	return 0, nil, fmt.Errorf("unsupported virtual media target %s", t)
 }
 
 // Map attaches an image on its own connection and returns a drive id (the target value).
 func (g *Group) Map(ctx context.Context, img vmedia.Image, opts vmedia.MapOptions) (uint16, error) {
-	class, port, descriptors, err := slotFor(opts.Target)
+	class, descriptors, err := slotFor(opts.Target)
 	if err != nil {
 		return 0, err
 	}
@@ -80,10 +82,10 @@ func (g *Group) Map(ctx context.Context, img vmedia.Image, opts vmedia.MapOption
 		return 0, err
 	}
 	disk := uint16(opts.Target)
-	if err := g.reserve(disk, port, opts.Target); err != nil {
+	if err := g.reserve(disk, opts.Target); err != nil {
 		return 0, err
 	}
-	ds, err := g.plugIn(ctx, drive, disk, setupOpts{portIndex: port, class: class, descriptors: descriptors})
+	ds, err := g.plugIn(ctx, drive, disk, setupOpts{class: class, descriptors: descriptors})
 
 	g.mu.Lock()
 	delete(g.plugging, disk)
@@ -105,7 +107,7 @@ func (g *Group) Map(ctx context.Context, img vmedia.Image, opts vmedia.MapOption
 
 // reserve claims the drive's slot until Map finishes. The firmware has two slots: at most one CD
 // and one disk (floppy or removable) at a time.
-func (g *Group) reserve(disk uint16, port byte, t vmedia.Target) error {
+func (g *Group) reserve(disk uint16, t vmedia.Target) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.closed {
@@ -115,7 +117,7 @@ func (g *Group) reserve(disk uint16, port byte, t vmedia.Target) error {
 	if taken(disk) {
 		return fmt.Errorf("%s drive is already mapped", t)
 	}
-	if port == 1 && (taken(uint16(vmedia.TargetRemovable)) || taken(uint16(vmedia.TargetFloppy))) {
+	if t != vmedia.TargetCD && (taken(uint16(vmedia.TargetRemovable)) || taken(uint16(vmedia.TargetFloppy))) {
 		return errors.New("only one floppy or removable drive can be mapped at a time")
 	}
 	g.plugging[disk] = true

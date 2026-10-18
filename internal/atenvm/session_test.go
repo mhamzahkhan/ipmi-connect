@@ -37,7 +37,11 @@ func (b *fakeBMC) write(h Header, p []byte) {
 }
 
 // handshake completes Device Setup + EP Setup from the BMC side.
-func (b *fakeBMC) handshake() {
+func (b *fakeBMC) handshake() { b.handshakeSetup() }
+
+// handshakeSetup completes the handshake and returns the setup payload as sent (44-byte prefix
+// plus descriptors, still RC4-encrypted if the client encrypted it).
+func (b *fakeBMC) handshakeSetup() []byte {
 	b.t.Helper()
 	// The setup frame's header declares only the 44-byte prefix; read the trailing 174 descriptor
 	// bytes too, as the real BMC does by walking them.
@@ -50,13 +54,15 @@ func (b *fakeBMC) handshake() {
 	if h.Tag != TagDeviceSetupReq {
 		b.t.Fatalf("first frame tag 0x%02x, want device setup", h.Tag)
 	}
-	if _, err := io.ReadFull(b.conn, make([]byte, int(h.PayloadLen)+174)); err != nil {
+	payload := make([]byte, int(h.PayloadLen)+174)
+	if _, err := io.ReadFull(b.conn, payload); err != nil {
 		b.t.Fatalf("BMC read setup body: %v", err)
 	}
 	b.write(Header{Tag: TagDeviceSetupResp, PayloadLen: 9}, []byte{0, 0x78, 0x56, 0x34, 0x12, 0, 0, 0, 0})
 	if h, _ := b.read(); h.Tag != TagEPSetup {
 		b.t.Fatalf("second frame tag 0x%02x, want EP setup", h.Tag)
 	}
+	return payload
 }
 
 // cbw sends a CBW to the client.
@@ -437,5 +443,39 @@ func TestSecondDiskRefusedWhileFirstIsPlugging(t *testing.T) {
 	case <-conns:
 		t.Error("the refused floppy opened a connection")
 	default:
+	}
+}
+
+// The X7SB3 stalls the host after INQUIRY when a drive asks for port 1, whatever its type, and
+// the BMC picks the slot itself; every drive must ask for port 0 (flags bits 1-3 == 1).
+func TestEveryDriveRequestsPortZero(t *testing.T) {
+	tests := []struct {
+		target vmedia.Target
+		class  byte
+	}{
+		{vmedia.TargetCD, ClassCDROM},
+		{vmedia.TargetRemovable, ClassRemovable},
+		{vmedia.TargetFloppy, ClassFloppy},
+	}
+	for _, tt := range tests {
+		t.Run(tt.target.String(), func(t *testing.T) {
+			g, conns := newGroupOverPipe(t, Credentials{Username: "t", Password: "t", IsSessionID: true})
+			img := &memImage{data: make([]byte, 4*SectorSizeCD)}
+			mapErr := make(chan error, 1)
+			go func() {
+				_, err := g.Map(context.Background(), img, vmedia.MapOptions{Target: tt.target, Size: int64(len(img.data))})
+				mapErr <- err
+			}()
+			setup := (<-conns).handshakeSetup()
+			if err := <-mapErr; err != nil {
+				t.Fatalf("Map: %v", err)
+			}
+			if port := setup[40] & 0x0e >> 1; port != 1 {
+				t.Errorf("setup port selector %d, want 1 (port index 0)", port)
+			}
+			if setup[41] != tt.class {
+				t.Errorf("class byte %d, want %d", setup[41], tt.class)
+			}
+		})
 	}
 }
