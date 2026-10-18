@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 func TestRoutesServeEmbeddedUI(t *testing.T) {

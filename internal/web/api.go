@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {

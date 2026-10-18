@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 // authed makes r look like it came from the console page: local Host and the session token.

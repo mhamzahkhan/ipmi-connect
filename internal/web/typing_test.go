@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 func keyLog(fc *fakeConsole) string {

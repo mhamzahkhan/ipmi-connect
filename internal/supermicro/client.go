@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"ipmi-connect/internal/bmc"
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 const (

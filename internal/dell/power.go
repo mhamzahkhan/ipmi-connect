@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 // GetPowerState queries the current chassis power status (bmc.PowerStateOn, Off or Unknown).

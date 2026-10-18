@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"ipmi-connect/internal/avmp"
-	"ipmi-connect/internal/bmc"
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/avmp"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 // fakeBMC answers an AVMP connection automatically: login OK, the C6220's three free drives,

@@ -6,7 +6,7 @@ import (
 	"net"
 	"testing"
 
-	"ipmi-connect/internal/atenvm"
+	"github.com/mhamzahkhan/ipmi-connect/internal/atenvm"
 )
 
 func TestHeaderEncodeDecode(t *testing.T) {

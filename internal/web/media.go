@@ -5,8 +5,8 @@ import (
 	"log"
 	"net/http"
 
-	"ipmi-connect/internal/bmc"
-	"ipmi-connect/internal/diskimage"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/diskimage"
 )
 
 // mediaRoutes registers the virtual media API. Paths name files on this machine; the server

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 // powerConsole reports OFF until a power action, then ON.

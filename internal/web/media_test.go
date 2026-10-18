@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 // fakeMediaConsole is a console with virtual media; it records calls.

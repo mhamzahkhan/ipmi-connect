@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 // fakeBMCWeb mimics the X7SB3's lighttpd CGI endpoints.

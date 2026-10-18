@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 var (

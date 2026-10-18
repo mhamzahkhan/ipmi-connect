@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 // fakeBMC is the BMC side of a virtual media connection over net.Pipe.

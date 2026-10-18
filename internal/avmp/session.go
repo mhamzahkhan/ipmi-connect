@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 const (

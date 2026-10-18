@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"ipmi-connect/internal/atenvm"
+	"github.com/mhamzahkhan/ipmi-connect/internal/atenvm"
 )
 
 func TestBuildDeviceSetupPacketCDROM(t *testing.T) {

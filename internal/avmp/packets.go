@@ -3,7 +3,7 @@ package avmp
 import (
 	"encoding/binary"
 
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 // Message types. Bit 0x8000 marks BMC-to-client messages.

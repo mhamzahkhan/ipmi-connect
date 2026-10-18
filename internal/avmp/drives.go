@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 // Target is a BMC virtual drive type, as VDISK_INFO reports it.

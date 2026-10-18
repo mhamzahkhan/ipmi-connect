@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 func solid(w, h int, v byte) []byte {

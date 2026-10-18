@@ -95,7 +95,7 @@ func TestCreateFromFolder(t *testing.T) {
 	src := t.TempDir()
 	files := map[string][]byte{
 		"readme.txt":                       []byte("drivers for the RAID card\n"),
-		"drivers/storage/hba.ko":          bytes.Repeat([]byte{0x7f}, 300_000),
+		"drivers/storage/hba.ko":           bytes.Repeat([]byte{0x7f}, 300_000),
 		"drivers/firmware-2026.bin":        bytes.Repeat([]byte("fw"), 50_000),
 		"A Long File Name With Spaces.txt": []byte("long names survive"),
 	}

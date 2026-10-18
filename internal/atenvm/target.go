@@ -3,7 +3,7 @@ package atenvm
 import (
 	"math"
 
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 // Sector sizes.

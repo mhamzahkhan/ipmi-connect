@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"ipmi-connect/internal/atenvm"
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/atenvm"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 var (

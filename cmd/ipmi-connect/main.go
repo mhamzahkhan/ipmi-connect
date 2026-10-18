@@ -12,8 +12,8 @@ import (
 	"strings"
 	"syscall"
 
-	"ipmi-connect/internal/bmc"
-	"ipmi-connect/internal/web"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/web"
 )
 
 func main() {

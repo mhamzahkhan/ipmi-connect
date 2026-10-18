@@ -5,9 +5,9 @@ import (
 	"log"
 	"time"
 
-	"ipmi-connect/internal/bmc"
-	"ipmi-connect/internal/supermicro"
-	"ipmi-connect/internal/web"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/supermicro"
+	"github.com/mhamzahkhan/ipmi-connect/internal/web"
 )
 
 const smPowerPollInterval = 15 * time.Second

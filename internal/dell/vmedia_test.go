@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 func TestAPCPGreeting(t *testing.T) {

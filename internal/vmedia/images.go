@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 // floppyMaxBytes is the vendor's size limit for the floppy drive.

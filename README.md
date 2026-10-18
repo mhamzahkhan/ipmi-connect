@@ -28,6 +28,12 @@ The protocols were reverse-engineered from the vendors' JARs. Nothing from those
 Requires Go 1.27.2+.
 
 ```bash
+go install github.com/mhamzahkhan/ipmi-connect/cmd/ipmi-connect@latest
+```
+
+Or from a clone:
+
+```bash
 make build                                   # -> bin/ipmi-connect
 ./bin/ipmi-connect 192.0.2.10                     # user root, prompts for the password
 ./bin/ipmi-connect 192.0.2.20 -u admin --no-browser  # print the URL instead of opening it

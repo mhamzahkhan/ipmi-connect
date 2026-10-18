@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 func init() {

@@ -7,8 +7,8 @@ import (
 	"net"
 	"strconv"
 
-	"ipmi-connect/internal/atenvm"
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/atenvm"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 const defaultVMediaPort = 623

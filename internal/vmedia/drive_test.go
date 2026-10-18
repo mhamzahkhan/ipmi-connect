@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 // fileImage behaves like an *os.File: a short read at the end returns io.EOF, and a write past

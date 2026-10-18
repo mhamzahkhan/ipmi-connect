@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"ipmi-connect/internal/bmc"
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 // defaultKVMPort is used for both channels until viewer.jnlp says otherwise.

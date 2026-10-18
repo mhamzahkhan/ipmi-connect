@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"ipmi-connect/internal/atenvm"
-	"ipmi-connect/internal/vmedia"
+	"github.com/mhamzahkhan/ipmi-connect/internal/atenvm"
+	"github.com/mhamzahkhan/ipmi-connect/internal/vmedia"
 )
 
 // patternReader fills reads with a byte pattern derived from the offset (for READ tests).

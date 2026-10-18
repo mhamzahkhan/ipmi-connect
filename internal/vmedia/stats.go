@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 // sample records transfer each interval and notices drives the BMC has dropped.

@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	"ipmi-connect/internal/aspeed"
-	"ipmi-connect/internal/bmc"
-	"ipmi-connect/internal/dell"
-	"ipmi-connect/internal/web"
+	"github.com/mhamzahkhan/ipmi-connect/internal/aspeed"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/dell"
+	"github.com/mhamzahkhan/ipmi-connect/internal/web"
 )
 
 const (

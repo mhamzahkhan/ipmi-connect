@@ -11,7 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"ipmi-connect/internal/textkeys"
+	"github.com/mhamzahkhan/ipmi-connect/internal/textkeys"
 )
 
 const (

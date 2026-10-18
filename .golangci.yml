@@ -10,7 +10,7 @@ linters:
         - (io.ReadCloser).Close
         - (net.Conn).Close
         - (*os.File).Close
-        - (*ipmi-connect/internal/web.WSConn).Close
+        - (*github.com/mhamzahkhan/ipmi-connect/internal/web.WSConn).Close
 
 formatters:
   enable:
@@ -19,4 +19,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - ipmi-connect
+        - github.com/mhamzahkhan/ipmi-connect

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"sync/atomic"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 // inputState forwards one browser's input to the console and remembers what that browser is

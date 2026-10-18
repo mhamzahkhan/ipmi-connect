@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"ipmi-connect/internal/bmc"
+	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
 )
 
 // connectAPCP performs the 53-byte APCP handshake on the given port and channel mode,

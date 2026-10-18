@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"ipmi-connect/internal/dell"
+	"github.com/mhamzahkhan/ipmi-connect/internal/dell"
 )
 
 func chunk(first bool, w, h uint16, data ...byte) *dell.VideoPacket {
