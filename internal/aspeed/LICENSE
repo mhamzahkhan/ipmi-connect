@@ -1,6 +1,17 @@
 The Go source files in this directory (decoder.go, huffman.go, tables_gen.go) are ported from
-Aspeed's JavaScript video decoder (decoder_js.js, huffmantable.js, yuv2rgb.js),
-Copyright (C) 2021 Aspeed Tech.
+Aspeed's JavaScript video decoder (lib/decoder_js.js, lib/huffmantable.js, lib/yuv2rgb.js),
+Copyright (C) 2021 Aspeed Tech., published at https://github.com/AspeedTech-BMC/aspeed_codec.
+
+Changes from upstream: translated to Go; the chroma quantisation table can be chosen separately
+from the luma table (Avocent BMCs send both); and, unless Decoder.ReferenceSemantics is set,
+decoding stops when a frame's data runs out and a resolution change starts from a blank picture.
+
+Earlier versions of ipmi-connect (in this repository's history, under internal/web/static/aspeed/)
+shipped Aspeed's lib/decoder.js, lib/decoder_js.js, lib/decoder_wasm.js, lib/decoder_wasm.wasm,
+lib/huffmantable.js and lib/yuv2rgb.js. Those files are also covered by the Mozilla Public
+License 2.0. decoder_wasm.wasm and huffmantable.js were unmodified; the others were changed
+locally (including the chroma-table change above), and the changed source is in this
+repository's history. The WebAssembly module's source is src/ in the upstream repository.
 
   This Source Code Form is subject to the terms of the Mozilla Public
   License, v. 2.0. If a copy of the MPL was not distributed with this

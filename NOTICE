@@ -1,0 +1,24 @@
+ipmi-connect
+Copyright 2026 M. Hamzah Khan
+
+Licensed under the Apache License, Version 2.0 (see LICENSE), except the files in
+internal/aspeed/, which are ported from Aspeed Technology's reference video decoder and remain
+under the Mozilla Public License 2.0 (see internal/aspeed/LICENSE).
+
+Provenance
+----------
+ipmi-connect was developed independently for interoperability with hardware the author owns.
+The protocols were worked out by studying the viewer applets served by the author's own BMCs
+and BMC firmware lawfully obtained from the vendors, and by observing the author's own devices,
+as permitted by sections 50B and 50BA of the Copyright, Designs and Patents Act 1988. No vendor
+source code was accessed. No vendor code, binaries, firmware or documentation are included.
+
+Trademarks
+----------
+ipmi-connect is an independent project. It is not affiliated with, endorsed by, sponsored by or
+supported by Dell Inc., Vertiv (Avocent), ATEN International, Super Micro Computer, Inc. or
+ASPEED Technology Inc. Dell, PowerEdge and iDRAC are trademarks of Dell Inc. or its
+subsidiaries. Avocent and MergePoint are trademarks of Vertiv or its affiliates. ATEN is a
+trademark of ATEN International. Supermicro is a trademark of Super Micro Computer, Inc. ASPEED
+is a trademark of ASPEED Technology Inc. Java is a registered trademark of Oracle and/or its
+affiliates. These names are used only to describe compatibility.

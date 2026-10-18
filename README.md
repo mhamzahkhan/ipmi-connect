@@ -93,4 +93,4 @@ These BMCs predate modern TLS, so use ipmi-connect on a trusted management netwo
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The ASPEED video decoder in `internal/aspeed/` is ported from Aspeed's reference implementation and stays under the Mozilla Public License 2.0; see [internal/aspeed/LICENSE](internal/aspeed/LICENSE).
+Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). The ASPEED video decoder in `internal/aspeed/` is ported from Aspeed's reference implementation and stays under the Mozilla Public License 2.0; see [internal/aspeed/LICENSE](internal/aspeed/LICENSE).
