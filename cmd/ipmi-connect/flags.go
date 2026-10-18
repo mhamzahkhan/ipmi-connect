@@ -14,8 +14,9 @@ type options struct {
 	Password  string // empty means IPMI_CONNECT_PASSWORD, else prompt
 	Type      string // auto, dell or supermicro
 	WebPort   int
-	NoBrowser bool
-	ShowHelp  bool
+	NoBrowser   bool
+	ShowHelp    bool
+	ShowVersion bool
 	// PortIgnored records a --port flag: accepted for compatibility with older launchers, but
 	// BMC ports come from the protocol.
 	PortIgnored bool
@@ -33,6 +34,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  --type <auto|dell|supermicro>  Force BMC vendor type (default: auto)\n")
 	fmt.Fprintf(os.Stderr, "  --web-port <port>         Local console UI port (default: 8080)\n")
 	fmt.Fprintf(os.Stderr, "  --no-browser              Do not auto-open the web browser\n")
+	fmt.Fprintf(os.Stderr, "  -v, --version             Show version and exit\n")
 	fmt.Fprintf(os.Stderr, "  -h, --help                Show this help message\n\n")
 	fmt.Fprintf(os.Stderr, "Examples:\n")
 	fmt.Fprintf(os.Stderr, "  %s 192.0.2.10                       # prompts for the root password\n", os.Args[0])
@@ -64,6 +66,8 @@ func parseArgs(args []string) options {
 		switch {
 		case arg == "-h" || arg == "--help" || arg == "-help":
 			o.ShowHelp = true
+		case arg == "-v" || arg == "--version" || arg == "-version":
+			o.ShowVersion = true
 		case arg == "--no-browser" || arg == "-no-browser":
 			o.NoBrowser = true
 		case arg == "-u" || arg == "--user" || arg == "-user":

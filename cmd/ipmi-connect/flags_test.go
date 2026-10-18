@@ -40,6 +40,9 @@ func TestParseArgs(t *testing.T) {
 		{"--port value is consumed, not taken as host", []string{"--port", "623", "h"}, with(func(o *options) { o.Host, o.PortIgnored = "h", true })},
 		{"--port= is noted as ignored", []string{"h", "--port=623"}, with(func(o *options) { o.Host, o.PortIgnored = "h", true })},
 		{"help", []string{"-h"}, with(func(o *options) { o.ShowHelp = true })},
+		{"version short", []string{"-v"}, with(func(o *options) { o.ShowVersion = true })},
+		{"version long", []string{"--version"}, with(func(o *options) { o.ShowVersion = true })},
+		{"version single dash", []string{"-version"}, with(func(o *options) { o.ShowVersion = true })},
 	}
 
 	for _, tt := range tests {

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -16,8 +17,14 @@ import (
 	"github.com/mhamzahkhan/ipmi-connect/internal/web"
 )
 
+var version = "dev"
+
 func main() {
 	opts := parseArgs(os.Args[1:])
+	if opts.ShowVersion {
+		fmt.Printf("ipmi-connect %s\n", version)
+		os.Exit(0)
+	}
 	if opts.ShowHelp || opts.Host == "" {
 		printUsage()
 		os.Exit(0)
