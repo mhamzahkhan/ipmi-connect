@@ -1,6 +1,10 @@
 package avmp
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+
+	"ipmi-connect/internal/vmedia"
+)
 
 // Message types. Bit 0x8000 marks BMC-to-client messages.
 const (
@@ -29,8 +33,7 @@ const (
 const (
 	headerLen = 10 // "AVMP", u32 total length (header included), u16 type
 
-	cdBlockSize  = 2048 // CD-ROM sector
-	imgBlockSize = 512  // floppy and removable images
+	cdBlockSize = vmedia.BlockSizeCD
 
 	allDrives = 0xFFFF
 	loginLen  = 153

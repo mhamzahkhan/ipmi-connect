@@ -5,12 +5,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"ipmi-connect/internal/vmedia"
@@ -27,8 +25,6 @@ const (
 )
 
 const (
-	// floppyMaxBytes is the vendor's limit for mapping an image to the floppy drive.
-	floppyMaxBytes = 2_880_000
 	// maxChunkBytes caps data per packet at the vendor's 32 KiB read size.
 	maxChunkBytes = 32 << 10
 	// maxReadBlocks bounds one read request; the host asks for far less.
@@ -45,19 +41,10 @@ type MapOptions = vmedia.MapOptions
 // DriveStatus describes a mapped drive.
 type DriveStatus = vmedia.DriveStatus
 
-type drive struct {
-	target        Target
-	image         Image
-	readOnly      bool
-	blockSize     uint32
-	blocks        uint32
-	read, written atomic.Int64
-}
-
 // Map attaches image as a drive of the requested type and returns its drive ID. While the BMC
 // still holds its drives from an earlier session, Map waits for one to free up.
 func (s *Session) Map(ctx context.Context, image Image, o MapOptions) (uint16, error) {
-	d, err := newDrive(image, o)
+	d, err := vmedia.NewDrive(image, o)
 	if err != nil {
 		return 0, err
 	}
@@ -69,56 +56,27 @@ func (s *Session) Map(ctx context.Context, image Image, o MapOptions) (uint16, e
 		return 0, err
 	}
 	s.mu.Lock()
-	d.readOnly = d.readOnly || s.readOnly
+	d.ReadOnly = d.ReadOnly || s.readOnly
 	s.drives[disk] = d // before the request: the host may read as soon as the BMC attaches it
 	s.mu.Unlock()
 
-	if err := s.write(d.mapPacket(disk)); err != nil {
+	if err := s.write(mapPacket(d, disk)); err != nil {
 		s.mu.Lock()
 		delete(s.drives, disk)
 		s.mu.Unlock()
 		return 0, err
 	}
 	log.Printf("[VMedia] Attached %s as drive %d (%d blocks of %d bytes, read-only %v)",
-		o.Target, disk, d.blocks, d.blockSize, d.readOnly)
+		o.Target, disk, d.Blocks, d.BlockSize, d.ReadOnly)
 	return disk, nil
 }
 
-func newDrive(image Image, o MapOptions) (*drive, error) {
-	d := &drive{target: o.Target, image: image, readOnly: o.ReadOnly}
-	switch o.Target {
-	case TargetCD:
-		d.blockSize, d.readOnly = cdBlockSize, true
-	case TargetRemovable:
-		d.blockSize = imgBlockSize
-	case TargetFloppy:
-		if o.Size >= floppyMaxBytes {
-			return nil, fmt.Errorf("a floppy image must be under %d bytes; map it as a removable disk", floppyMaxBytes)
-		}
-		d.blockSize = imgBlockSize
-	default:
-		return nil, fmt.Errorf("unknown drive target %d", o.Target)
+func mapPacket(d *vmedia.Drive, disk uint16) []byte {
+	if d.Target == TargetCD {
+		return mapCD(disk, d.Blocks)
 	}
-	blocks := o.Size / int64(d.blockSize)
-	if o.Target == TargetCD && o.Size%cdBlockSize != 0 {
-		blocks++ // a padded last sector reads as zeros
-	}
-	if blocks < 1 {
-		return nil, errors.New("the image is empty")
-	}
-	if blocks > math.MaxUint32 {
-		return nil, errors.New("the image is too large")
-	}
-	d.blocks = uint32(blocks)
-	return d, nil
-}
-
-func (d *drive) mapPacket(disk uint16) []byte {
-	if d.target == TargetCD {
-		return mapCD(disk, d.blocks)
-	}
-	c, h, sec := geometry(d.blocks)
-	return mapDisk(disk, d.blockSize, d.blocks, d.readOnly, c, h, sec)
+	c, h, sec := geometry(d.Blocks)
+	return mapDisk(disk, d.BlockSize, d.Blocks, d.ReadOnly, c, h, sec)
 }
 
 // waitForDrive asks for the drive list until a drive of the wanted type is free.
@@ -203,7 +161,7 @@ func (s *Session) dropDrive(disk uint16, why string) {
 	d, ok := s.drives[disk]
 	delete(s.drives, disk)
 	if ok {
-		s.lastEvent = fmt.Sprintf("%s drive: %s", d.target, why)
+		s.lastEvent = fmt.Sprintf("%s drive: %s", d.Target, why)
 	}
 	s.mu.Unlock()
 	if !ok {
@@ -219,10 +177,7 @@ func (s *Session) Drives() []DriveStatus {
 	defer s.mu.Unlock()
 	out := make([]DriveStatus, 0, len(s.drives))
 	for id, d := range s.drives {
-		out = append(out, DriveStatus{
-			Disk: id, Target: d.target, ReadOnly: d.readOnly, BlockSize: d.blockSize, Blocks: d.blocks,
-			BytesRead: d.read.Load(), BytesWritten: d.written.Load(),
-		})
+		out = append(out, d.Status(id))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Disk < out[j].Disk })
 	return out
@@ -251,7 +206,7 @@ func (s *Session) mappedDrives() []uint16 {
 	return ids
 }
 
-func (s *Session) lookup(disk uint16) *drive {
+func (s *Session) lookup(disk uint16) *vmedia.Drive {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.drives[disk]
@@ -272,31 +227,24 @@ func (s *Session) serveRead(body []byte) error {
 		log.Printf("[VMedia] Refusing a %d-block read at block %d of drive %d", n, start, disk)
 		return s.write(clientStatus(disk, statusReadFailed))
 	}
-	perPacket := maxChunkBytes / d.blockSize
+	perPacket := maxChunkBytes / d.BlockSize
 	if factor > 0 {
 		perPacket = min(perPacket, factor)
 	}
-	size := int64(d.blocks) * int64(d.blockSize)
 
 	status := statusOK
-	buf := make([]byte, int(perPacket*d.blockSize))
+	buf := make([]byte, int(perPacket*d.BlockSize))
 	for done := uint32(0); done < n; {
 		count := min(perPacket, n-done)
-		chunk := buf[:int(count*d.blockSize)]
-		clear(chunk)
-		off := (int64(start) + int64(done)) * int64(d.blockSize)
-		if off < size {
-			end := min(int64(len(chunk)), size-off)
-			if _, err := d.image.ReadAt(chunk[:end], off); err != nil && !errors.Is(err, io.EOF) {
-				log.Printf("[VMedia] Image read failed: %v", err)
-				status = statusReadFailed
-				break
-			}
+		chunk := buf[:int(count*d.BlockSize)]
+		if _, err := d.ReadAt(chunk, (int64(start)+int64(done))*int64(d.BlockSize)); err != nil {
+			log.Printf("[VMedia] Image read failed: %v", err)
+			status = statusReadFailed
+			break
 		}
 		if err := s.write(readData(disk, start+done, count, chunk)); err != nil {
 			return err
 		}
-		d.read.Add(int64(len(chunk)))
 		done += count
 	}
 	return s.write(clientStatus(disk, status))
@@ -315,19 +263,18 @@ func (s *Session) serveWrite(body []byte) error {
 	switch {
 	case d == nil:
 		return s.write(clientStatus(disk, statusWriteFailed))
-	case d.readOnly:
+	case d.ReadOnly:
 		log.Printf("[VMedia] Refused a write to read-only drive %d", disk)
 		return s.write(clientStatus(disk, statusWriteFailed))
-	case uint64(start)+uint64(n) > uint64(d.blocks) || uint64(len(data)) < uint64(n)*uint64(d.blockSize):
+	case !d.Contains(start, n) || uint64(len(data)) < uint64(n)*uint64(d.BlockSize):
 		log.Printf("[VMedia] Refused an out-of-range write (%d blocks at %d) to drive %d", n, start, disk)
 		return s.write(clientStatus(disk, statusWriteFailed))
 	}
-	length := int(n * d.blockSize)
-	if _, err := d.image.WriteAt(data[:length], int64(start)*int64(d.blockSize)); err != nil {
+	length := int(n * d.BlockSize)
+	if _, err := d.WriteAt(data[:length], int64(start)*int64(d.BlockSize)); err != nil {
 		log.Printf("[VMedia] Image write failed: %v", err)
 		return s.write(clientStatus(disk, statusWriteFailed))
 	}
-	d.written.Add(int64(length))
 	return s.write(clientStatus(disk, statusOK))
 }
 

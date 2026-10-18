@@ -39,7 +39,7 @@ type Session struct {
 	mapMu   sync.Mutex // one Map at a time: they share the drive-info replies
 
 	mu        sync.Mutex
-	drives    map[uint16]*drive
+	drives    map[uint16]*vmedia.Drive
 	readOnly  bool   // the BMC's READ_ONLY option (0x8430) applies to later maps
 	lastEvent string // the latest drive-level failure, for the UI
 
@@ -59,7 +59,7 @@ func NewSession(conn net.Conn, user, password string) *Session {
 	return &Session{
 		conn: conn, user: user, password: password,
 		heartbeatEvery: heartbeatInterval, driveWait: driveWaitTimeout, driveRetry: driveRetryInterval,
-		drives: map[uint16]*drive{},
+		drives: map[uint16]*vmedia.Drive{},
 		info:   make(chan []byte, 1),
 		done:   make(chan struct{}),
 	}
@@ -145,7 +145,7 @@ func (s *Session) end(err error, release bool) {
 			}
 		}
 		s.mu.Lock()
-		s.drives = map[uint16]*drive{}
+		s.drives = map[uint16]*vmedia.Drive{}
 		s.mu.Unlock()
 		if s.stop != nil {
 			s.stop()
