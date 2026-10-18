@@ -62,6 +62,11 @@
       <div class="header-right">
 
 
+        <button class="btn" id="btnPaste" title="Type text on the host as keystrokes (or press Ctrl/Cmd+Shift+V on the console)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="2" width="8" height="4" rx="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path></svg>
+          <span>Paste</span>
+        </button>
+
         <!-- Virtual Media: shown only for BMCs that support it -->
         <button class="btn btn-media" id="btnMedia" title="Virtual Media" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
@@ -192,6 +197,24 @@
         <div class="modal-footer media-footer">
           <button class="btn btn-secondary" id="btnUsbReset" title="Reconnect the virtual media USB device on the host (about a second); mapped images stay mapped, keyboard and mouse are not affected">USB Reset</button>
           <button class="btn btn-secondary" id="btnMediaDone">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="pasteModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title"><h3>Type Text on the Host</h3></div>
+          <button class="btn-close" id="btnClosePaste">&times;</button>
+        </div>
+        <div class="modal-body">
+          <textarea class="paste-text" id="pasteText" rows="8" spellcheck="false" placeholder="Text to type as keystrokes…"></textarea>
+          <p class="modal-description">Typed as a US keyboard layout, about 40 characters a second. Characters a US keyboard has no key for are skipped.</p>
+          <span class="paste-count" id="pasteCount"></span>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btnPasteCancel">Cancel</button>
+          <button class="btn btn-secondary" id="btnPasteType">Type It</button>
         </div>
       </div>
     </div>

@@ -1,6 +1,8 @@
 // IPMI Modern Console - Client App
 import { KEY_TO_HID } from '/keymap.js';
 import { setupMedia } from '/media.js';
+import { setupPaste } from '/paste.js';
+import { toast } from '/toast.js';
 
 (function() {
   'use strict';
@@ -34,6 +36,15 @@ import { setupMedia } from '/media.js';
   let ws = null;
   let isConnected = false;
   let currentPowerAction = null;
+  let currentPowerTitle = '';
+  let paste = null; // paste-as-keystrokes, set up in init
+
+  // sendMessage sends a JSON message on the console socket; false when not connected.
+  function sendMessage(msg) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(msg));
+    return true;
+  }
 
   // Initialize
   // Session: the launch link carries a one-time code in its fragment (#c=...), exchanged once for
@@ -90,6 +101,7 @@ import { setupMedia } from '/media.js';
     setupPowerButtons();
     setupMacros();
     setupMedia(apiFetch);
+    paste = setupPaste(sendMessage);
     setupFullscreenAndScreenshot();
     pollStatus();
     setInterval(pollStatus, 3000);
@@ -197,6 +209,8 @@ import { setupMedia } from '/media.js';
       statRes.textContent = `Resolution: ${msg.width} x ${msg.height}`;
     } else if (msg.type === 'status') {
       overlayStatus.textContent = msg.text || 'Processing...';
+    } else if (msg.type === 'typed') {
+      paste.onResult(msg);
     } else if (msg.type === 'ping') {
       const now = performance.now();
       const rtt = Math.round(now - msg.client_time);
@@ -288,6 +302,13 @@ import { setupMedia } from '/media.js';
 
     window.addEventListener('keydown', (e) => {
       if (!consoleFocused()) return;
+      // Ctrl/Cmd+Shift+V types the clipboard on the host instead of sending the chord.
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyV') {
+        e.preventDefault();
+        releaseAll();
+        paste.fromClipboard();
+        return;
+      }
       // Keys belong to the host while the console has focus: stop Backspace, Space, arrows, Tab,
       // F-keys and browser shortcuts acting on this page. (The OS still keeps a few, like Cmd+Q.)
       e.preventDefault();
@@ -330,6 +351,7 @@ import { setupMedia } from '/media.js';
   function setupPowerButtons() {
     function openPowerConfirm(action, title, msg) {
       currentPowerAction = action;
+      currentPowerTitle = title.replace(/^Confirm /, '');
       powerModalTitle.textContent = title;
       powerModalMessage.textContent = msg;
       powerModal.classList.add('open');
@@ -365,13 +387,13 @@ import { setupMedia } from '/media.js';
         });
         const res = await resp.json();
         if (!resp.ok || res.error) {
-          alert(`Power action failed: ${res.error || 'Server error'}`);
+          toast(`Power action failed: ${res.error || 'server error'}`, 'error', 6000);
         } else {
-          console.log(`Power action executed successfully:`, res);
+          toast(`${currentPowerTitle} sent`, 'success');
           followPower();
         }
       } catch (err) {
-        alert(`Failed to execute power action: ${err.message}`);
+        toast(`Power action failed: ${err.message}`, 'error', 6000);
       }
     });
   }

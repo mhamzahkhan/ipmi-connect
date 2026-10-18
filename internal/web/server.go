@@ -33,6 +33,8 @@ type Server struct {
 	// After a power action the power state is re-read this often, for this long.
 	powerFollowEvery time.Duration
 	powerFollowFor   time.Duration
+	typeMu           sync.Mutex    // one paste typed at a time
+	typeDelay        time.Duration // between typed key events
 	clients          map[*wsClient]struct{}
 	clientsMu        sync.Mutex // guards clients
 	Port             int        // guarded by sessionMu once Run starts
@@ -69,6 +71,7 @@ func NewServer(port int, state bmc.SessionState) *Server {
 
 		powerFollowEvery: powerFollowInterval,
 		powerFollowFor:   powerFollowDuration,
+		typeDelay:        typeKeyDelay,
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"slices"
+	"sync/atomic"
 
 	"ipmi-connect/internal/bmc"
 )
@@ -16,6 +17,9 @@ type inputState struct {
 	buttons byte
 	x, y    uint16
 	lastErr string // last logged input error, so a persistent failure logs once, not per event
+	// typing is set while a paste is being typed: live keys and pointer moves from this browser
+	// are dropped so they cannot interleave with it.
+	typing atomic.Bool
 }
 
 func newInputState(console bmc.Console) *inputState {
@@ -31,12 +35,16 @@ type clientMessage struct {
 	X       uint16 `json:"x"`
 	Y       uint16 `json:"y"`
 	Name    string `json:"name"`
+	Text    string `json:"text"`
 }
 
 // handle dispatches one browser message. Malformed messages are ignored.
 func (in *inputState) handle(data []byte) {
 	var msg clientMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
+		return
+	}
+	if in.typing.Load() && (msg.Type == "key" || msg.Type == "pointer" || msg.Type == "macro") {
 		return
 	}
 	switch msg.Type {

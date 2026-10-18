@@ -9,8 +9,9 @@ import (
 	"github.com/coder/websocket"
 )
 
-// maxClientMessage bounds browser-to-server messages; input events are tiny JSON objects.
-const maxClientMessage = 4096
+// maxClientMessage bounds browser-to-server messages: input events are tiny, a paste to type
+// is up to maxTypeRunes characters.
+const maxClientMessage = 4*maxTypeRunes + 1024
 
 // handleWS streams video to one browser and forwards its input to the console. Accept rejects
 // cross-origin connections: only pages served by this server can open the socket.
@@ -54,12 +55,19 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var typing context.CancelFunc // the paste this browser is typing, if any
+	defer func() {
+		if typing != nil {
+			typing()
+		}
+	}()
 	for {
 		typ, data, err := conn.Read(ctx)
 		if err != nil {
 			return
 		}
 		if typ == websocket.MessageText && input != nil {
+			s.handleTyping(ctx, client, input, data, &typing)
 			input.handle(data)
 		}
 	}

@@ -112,3 +112,14 @@ func TestHandleClientInputRoutesToConsole(t *testing.T) {
 		t.Errorf("refreshes = %d", fc.refreshes)
 	}
 }
+
+func TestLiveInputIsIgnoredWhileTyping(t *testing.T) {
+	fc := &fakeConsole{}
+	in := newInputState(fc)
+	in.typing.Store(true)
+	in.handle([]byte(`{"type":"key","down":true,"hidCode":4}`))
+	in.handle([]byte(`{"type":"pointer","mask":1,"x":5,"y":5}`))
+	if len(fc.keys) != 0 || len(fc.pointers) != 0 {
+		t.Errorf("live input reached the host during a paste: keys %v pointers %v", fc.keys, fc.pointers)
+	}
+}
