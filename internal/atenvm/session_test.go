@@ -239,6 +239,10 @@ func TestOversizedOutCBWClosesSession(t *testing.T) {
 	}
 	// A WRITE claiming 4 GiB of data must not pre-allocate; the session is dropped instead.
 	bmc.cbw(9, 0xFFFFFFFF, false, CmdWrite10, 0, 0, 0, 0, 0, 0, 0, 1, 0)
+	// Take the client's detach; net.Pipe is unbuffered, so leaving it unread stalls close() for
+	// detachAckTimeout, the same as this test's deadline.
+	for h, _ := bmc.read(); h.Tag != TagDetachReq; h, _ = bmc.read() {
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	for len(g.Drives()) > 0 {
 		if time.Now().After(deadline) {
