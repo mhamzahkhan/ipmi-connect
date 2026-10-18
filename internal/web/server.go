@@ -125,9 +125,7 @@ func (s *Server) Run(ctx context.Context, openBrowser bool) error {
 
 	// The link's one-time code signs in the first browser that opens it.
 	url := s.LaunchURL()
-	log.Printf("==================================================================")
-	log.Printf("🚀 IPMI Modern Console active at: %s", url)
-	log.Printf("==================================================================")
+	log.Printf("Console: %s", url)
 
 	if openBrowser {
 		go func() {

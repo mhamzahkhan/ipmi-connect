@@ -1,4 +1,4 @@
-// IPMI Modern Console - Client App
+// ipmi-connect browser console
 import { KEY_TO_HID } from '/keymap.js';
 import { setupMedia } from '/media.js';
 import { setupPaste } from '/paste.js';

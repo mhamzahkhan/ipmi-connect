@@ -25,7 +25,7 @@ const defaultWebPort = 8080
 
 func printUsage() {
 	fmt.Fprintf(os.Stderr, "Usage: %s <host> [options]\n\n", os.Args[0])
-	fmt.Fprintf(os.Stderr, "Modern, sleek replacement client for legacy Dell & Supermicro IPMI BMC consoles.\n\n")
+	fmt.Fprintf(os.Stderr, "Browser KVM console for legacy Dell (Avocent) and Supermicro (ATEN) BMCs.\n\n")
 	fmt.Fprintf(os.Stderr, "Options:\n")
 	fmt.Fprintf(os.Stderr, "  -u, --user <username>     BMC username (default: $%s, else root)\n", envUser)
 	fmt.Fprintf(os.Stderr, "  -p, --pass <password>     BMC password (default: $%s, else prompted).\n", envPassword)
