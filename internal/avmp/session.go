@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"ipmi-connect/internal/vmedia"
 )
 
 const (
@@ -48,6 +50,8 @@ type Session struct {
 	err       error // why the session ended; set before done closes
 	closeOnce sync.Once
 }
+
+var _ vmedia.Session = (*Session)(nil)
 
 // NewSession wraps a connection that has completed the APCP greeting (and TLS). user and
 // password are the one-time tokens from the KVM control channel.

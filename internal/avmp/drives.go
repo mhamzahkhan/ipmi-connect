@@ -12,29 +12,19 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"ipmi-connect/internal/vmedia"
 )
 
 // Target is a BMC virtual drive type, as VDISK_INFO reports it.
-type Target byte
+type Target = vmedia.Target
 
 // Drive types.
 const (
-	TargetRemovable Target = 1
-	TargetCD        Target = 2
-	TargetFloppy    Target = 4
+	TargetRemovable = vmedia.TargetRemovable
+	TargetCD        = vmedia.TargetCD
+	TargetFloppy    = vmedia.TargetFloppy
 )
-
-func (t Target) String() string {
-	switch t {
-	case TargetRemovable:
-		return "removable"
-	case TargetCD:
-		return "cd"
-	case TargetFloppy:
-		return "floppy"
-	}
-	return fmt.Sprintf("type %d", byte(t))
-}
 
 const (
 	// floppyMaxBytes is the vendor's limit for mapping an image to the floppy drive.
@@ -47,28 +37,13 @@ const (
 )
 
 // Image is a disk image. Writes are only made to drives mapped writable.
-type Image interface {
-	io.ReaderAt
-	io.WriterAt
-}
+type Image = vmedia.Image
 
 // MapOptions describes an image to attach.
-type MapOptions struct {
-	Target   Target
-	Size     int64 // image size in bytes
-	ReadOnly bool  // CDs are always read-only
-}
+type MapOptions = vmedia.MapOptions
 
 // DriveStatus describes a mapped drive.
-type DriveStatus struct {
-	Disk         uint16
-	Target       Target
-	ReadOnly     bool
-	BlockSize    uint32
-	Blocks       uint32
-	BytesRead    int64
-	BytesWritten int64
-}
+type DriveStatus = vmedia.DriveStatus
 
 type drive struct {
 	target        Target

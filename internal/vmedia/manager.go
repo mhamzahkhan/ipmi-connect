@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"ipmi-connect/internal/avmp"
 	"ipmi-connect/internal/bmc"
 )
 
@@ -19,11 +18,8 @@ const (
 	mapTimeout     = 3 * time.Minute
 )
 
-// Opener connects and logs in a new AVMP session.
-type Opener func(ctx context.Context) (*avmp.Session, error)
-
-var targetTypes = map[bmc.MediaTarget]avmp.Target{
-	bmc.TargetCD: avmp.TargetCD, bmc.TargetRemovable: avmp.TargetRemovable, bmc.TargetFloppy: avmp.TargetFloppy,
+var targetTypes = map[bmc.MediaTarget]Target{
+	bmc.TargetCD: TargetCD, bmc.TargetRemovable: TargetRemovable, bmc.TargetFloppy: TargetFloppy,
 }
 
 // mapping is an image attached (or being attached) to a drive.
@@ -35,7 +31,7 @@ type mapping struct {
 	file     *os.File
 }
 
-// Manager implements bmc.VirtualMedia on top of AVMP.
+// Manager implements bmc.VirtualMedia on top of a virtual media Session.
 type Manager struct {
 	open        Opener
 	sampleEvery time.Duration
@@ -43,7 +39,7 @@ type Manager struct {
 	mu       sync.Mutex
 	images   []*image
 	drives   map[bmc.MediaTarget]*mapping
-	session  *avmp.Session
+	session  Session
 	history  []bmc.MediaSample
 	lastErr  string
 	closed   bool
@@ -56,6 +52,13 @@ var _ bmc.VirtualMedia = (*Manager)(nil)
 // NewManager returns a manager that opens sessions with open.
 func NewManager(open Opener) *Manager {
 	return &Manager{open: open, sampleEvery: sampleInterval, drives: map[bmc.MediaTarget]*mapping{}}
+}
+
+// SetSampleInterval overrides the stats sampling interval (used in tests).
+func (m *Manager) SetSampleInterval(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sampleEvery = d
 }
 
 func (m *Manager) find(id string) *image {
@@ -184,7 +187,7 @@ func (m *Manager) attach(ctx context.Context, mp *mapping, im *image, target bmc
 	if err != nil {
 		return err
 	}
-	disk, err := sess.Map(ctx, f, avmp.MapOptions{Target: targetTypes[target], Size: im.size, ReadOnly: im.readOnly})
+	disk, err := sess.Map(ctx, f, MapOptions{Target: targetTypes[target], Size: im.size, ReadOnly: im.readOnly})
 	if err != nil {
 		_ = f.Close()
 		return err
@@ -206,7 +209,7 @@ func (m *Manager) attach(ctx context.Context, mp *mapping, im *image, target bmc
 }
 
 // ensureSession returns the open session, opening one if needed.
-func (m *Manager) ensureSession(ctx context.Context) (*avmp.Session, error) {
+func (m *Manager) ensureSession(ctx context.Context) (Session, error) {
 	m.sessMu.Lock()
 	defer m.sessMu.Unlock()
 	m.mu.Lock()
@@ -229,7 +232,7 @@ func (m *Manager) ensureSession(ctx context.Context) (*avmp.Session, error) {
 }
 
 // watch clears every mapping when a session ends on its own.
-func (m *Manager) watch(sess *avmp.Session) {
+func (m *Manager) watch(sess Session) {
 	<-sess.Done()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -347,7 +350,7 @@ func (m *Manager) MediaStatus() bmc.MediaStatus {
 	for _, im := range m.images {
 		st.Images = append(st.Images, m.describe(im))
 	}
-	counters := map[uint16]avmp.DriveStatus{}
+	counters := map[uint16]DriveStatus{}
 	if m.session != nil {
 		for _, d := range m.session.Drives() {
 			counters[d.Disk] = d

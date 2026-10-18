@@ -5,12 +5,11 @@ import (
 	"os"
 	"time"
 
-	"ipmi-connect/internal/avmp"
 	"ipmi-connect/internal/bmc"
 )
 
 // sample records transfer each interval and notices drives the BMC has dropped.
-func (m *Manager) sample(ctx context.Context, sess *avmp.Session) {
+func (m *Manager) sample(ctx context.Context, sess Session) {
 	t := time.NewTicker(m.sampleEvery)
 	defer t.Stop()
 	prev := map[uint16][2]int64{}
@@ -26,7 +25,7 @@ func (m *Manager) sample(ctx context.Context, sess *avmp.Session) {
 
 // record takes one sample. The drive list is read under m.mu, so a map finishing at the same
 // moment cannot be mistaken for a drive the BMC dropped.
-func (m *Manager) record(now time.Time, sess *avmp.Session, prev map[uint16][2]int64) map[uint16][2]int64 {
+func (m *Manager) record(now time.Time, sess Session, prev map[uint16][2]int64) map[uint16][2]int64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.session != sess {

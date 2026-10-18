@@ -1,4 +1,4 @@
-package vmedia
+package vmedia_test
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 
 	"ipmi-connect/internal/avmp"
 	"ipmi-connect/internal/bmc"
+	"ipmi-connect/internal/vmedia"
 )
 
 // fakeBMC answers an AVMP connection automatically: login OK, the C6220's three free drives,
@@ -64,7 +65,7 @@ func (b *fakeBMC) reply(conn net.Conn, typ uint16, body []byte) {
 }
 
 // opener connects sessions to the fake BMC.
-func (b *fakeBMC) opener(ctx context.Context) (*avmp.Session, error) {
+func (b *fakeBMC) opener(ctx context.Context) (vmedia.Session, error) {
 	server, client := net.Pipe()
 	b.mu.Lock()
 	b.conn = server
@@ -96,10 +97,10 @@ func (b *fakeBMC) mapped() map[uint16]bool {
 	return out
 }
 
-func newManager(t *testing.T) (*Manager, *fakeBMC) {
+func newManager(t *testing.T) (*vmedia.Manager, *fakeBMC) {
 	t.Helper()
 	b := &fakeBMC{maps: map[uint16]bool{}}
-	m := NewManager(b.opener)
+	m := vmedia.NewManager(b.opener)
 	t.Cleanup(m.Close)
 	return m, b
 }
@@ -289,7 +290,7 @@ func TestReadOnlyImageIsOpenedReadOnly(t *testing.T) {
 
 func TestHistorySamples(t *testing.T) {
 	m, b := newManager(t)
-	m.sampleEvery = 20 * time.Millisecond
+	m.SetSampleInterval(20 * time.Millisecond)
 	img, _ := m.AddImage(writeFile(t, "a.iso", 8192), false)
 	if err := m.MapImage(img.ID, bmc.TargetCD); err != nil {
 		t.Fatal(err)
@@ -307,7 +308,7 @@ func TestHistorySamples(t *testing.T) {
 
 func TestBMCReleaseIsReflected(t *testing.T) {
 	m, b := newManager(t)
-	m.sampleEvery = 20 * time.Millisecond
+	m.SetSampleInterval(20 * time.Millisecond)
 	img, _ := m.AddImage(writeFile(t, "a.iso", 4096), false)
 	if err := m.MapImage(img.ID, bmc.TargetCD); err != nil {
 		t.Fatal(err)
@@ -321,7 +322,7 @@ func TestBMCReleaseIsReflected(t *testing.T) {
 
 func TestCancelAMapInProgress(t *testing.T) {
 	block := make(chan struct{})
-	m := NewManager(func(ctx context.Context) (*avmp.Session, error) {
+	m := vmedia.NewManager(func(ctx context.Context) (vmedia.Session, error) {
 		select {
 		case <-block:
 		case <-ctx.Done():

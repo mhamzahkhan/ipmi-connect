@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ipmi-connect/internal/avmp"
+	"ipmi-connect/internal/vmedia"
 )
 
 const (
@@ -53,7 +54,7 @@ func (c *Client) requestVMCredentials(ctx context.Context) (user, password strin
 
 // openVMedia opens and logs in an AVMP session on its own APCP channel (mode 2, version 0.0
 // as the vendor client sends). It needs the KVM session for the credentials.
-func (c *Client) openVMedia(ctx context.Context) (*avmp.Session, error) {
+func (c *Client) openVMedia(ctx context.Context) (vmedia.Session, error) {
 	if c.loggingOut.Load() {
 		return nil, errors.New("the session is closing")
 	}
