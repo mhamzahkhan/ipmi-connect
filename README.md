@@ -21,7 +21,7 @@ The protocols were reverse-engineered from the vendors' JARs. Nothing from those
 | Mouse | Works | Implemented (incl. AES variant), not yet confirmed on hardware |
 | Macros (Ctrl+Alt+Del, F-keys…) | Works | Implemented |
 | Power control | Works | Status verified; commands over the KVM socket or `ipmi.cgi` |
-| Virtual media | Works: ISO on CD/DVD (booted an installer), IMG on removable or floppy (read-write), Create Image, transfer graph, USB reset | Not implemented |
+| Virtual media | Works: ISO on CD/DVD (booted an installer), IMG on removable or floppy (read-write), Create Image, transfer graph, USB reset | ISO on CD (read back byte-exact on hardware); IMG on removable or floppy (reads verified on hardware, writes not yet) |
 
 ## Quick start
 
@@ -33,7 +33,7 @@ make build                                   # -> bin/ipmi-connect
 ./bin/ipmi-connect 192.0.2.20 -u admin --no-browser  # print the URL instead of opening it
 ```
 
-The console runs at `http://127.0.0.1:8080` (or the next free port). Vendor is detected automatically; force it with `--type dell|supermicro`. Credentials come from flags, else environment variables, else defaults:
+The console runs at `http://127.0.0.1:8080` (or the next free port). The launch link carries a one-time sign-in code; the console refuses API and WebSocket requests without the token it is exchanged for, and refuses cross-site requests. Vendor is detected automatically; force it with `--type dell|supermicro`. Credentials come from flags, else environment variables, else defaults:
 
 | | Flag | Environment | Default |
 | :--- | :--- | :--- | :--- |
@@ -64,12 +64,15 @@ internal/
   web/                 Local HTTP/WebSocket server, key macros, frame broadcast
     static/            Embedded UI: app.js (paints RGBA frames), keymap.js
   aspeed/              ASPEED video decoder (Go port of Aspeed's MPL-2.0 reference)
+  vmedia/              Virtual media manager: local image library, drives, transfer stats
+  avmp/                Dell (Avocent AVMP) virtual media client
+  atenvm/              Supermicro (ATEN Virtual Storage) virtual media client
+  diskimage/           FAT image creation (blank, or from a folder)
+  textkeys/            Text to USB HID key presses (US layout)
 docs/                  Hardware inventory, protocol specs, per-vendor deep dives
 ```
 
 ## Known issues
 
-- **The local console has no authentication or Origin checks.** Any web page open in the same browser can POST to `127.0.0.1:8080/api/power` as a no-CORS `text/plain` request, or open the `/ws` socket and type into the console. Treat it as unsafe while browsing elsewhere until this is fixed.
-- Supermicro mouse and Supermicro virtual media: see the status table.
-- Video frames are dropped when the browser falls behind; a dropped ASPEED delta tile leaves stale pixels until the next full frame.
+- Supermicro mouse and virtual media writes: see the status table.
 - `--port` is accepted for compatibility but ignored.
