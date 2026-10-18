@@ -112,7 +112,7 @@ func (g *Group) Map(ctx context.Context, img vmedia.Image, opts vmedia.MapOption
 	g.mu.Lock()
 	keepalive := g.keepalive
 	g.mu.Unlock()
-	ds := newDeviceSession(conn, target, disk, opts.Target, readOnly, keepalive)
+	ds := newDeviceSession(conn, target, disk, opts.Target, readOnly, opts.Size, keepalive)
 	if err := ds.open(ctx, setupOpts{
 		username: creds.Username, password: creds.Password, isSessionID: creds.IsSessionID,
 		portIndex: port, class: class, descriptors: descriptors, encrypt: creds.Encrypt,

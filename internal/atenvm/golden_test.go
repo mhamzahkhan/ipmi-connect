@@ -30,11 +30,12 @@ func TestCDGoldenResponses(t *testing.T) {
 		"058000211f0000004154454e202020205669727475616c204344524f4d2020205953304a")
 	// READ CAPACITY(10): last LBA 8191, block 2048.
 	check(t, tgt, "READ CAPACITY", "25000000000000000000", 8, "00001fff00000800")
-	// READ TOC format 0 (LBA), full 20 bytes.
+	// READ TOC format 1 (session info): the actual captured CDB (legacy byte-9 format select).
+	check(t, tgt, "READ TOC fmt1 (capture)", "43000000000000000c40", 0x0c, "000a01010014010000000000")
+	// READ TOC format 0 (full TOC): standard MMC conformance (not in the capture, which only showed
+	// the session-info form).
 	check(t, tgt, "READ TOC fmt0", "4300000000000000ff00", 0xff00,
 		"0012010100140100000000000014aa0000002000")
-	// READ TOC format 1 (session info).
-	check(t, tgt, "READ TOC fmt1", "4300010000000000ff00", 0xff00, "000a01010014010000000000")
 	// GET CONFIGURATION, allocation 8.
 	check(t, tgt, "GET CONFIG a8", "46000000000000000800", 8, "0000009800000008")
 	// GET EVENT STATUS (no change, media present) once TEST UNIT READY cleared the new-media flag.

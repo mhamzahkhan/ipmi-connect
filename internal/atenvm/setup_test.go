@@ -88,7 +88,7 @@ func TestKeepaliveAndDetachBuilders(t *testing.T) {
 	if h.Tag != atenvm.TagPingReq {
 		t.Errorf("keepalive request tag = 0x%02x, want 0x04", h.Tag)
 	}
-	if len(p) != 4 || h.PayloadLen != 4 {
+	if len(p) != 0 || h.PayloadLen != 0 {
 		t.Errorf("keepalive payload len %d", len(p))
 	}
 	hd, pd := atenvm.BuildDetachPacket()

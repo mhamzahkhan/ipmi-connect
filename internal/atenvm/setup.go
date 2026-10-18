@@ -14,7 +14,9 @@ const (
 	FlagAllocatePort  byte = 0x01 // Bit 0: 1 = Allocate port
 )
 
-// Device class selectors (Device Setup prefix byte 41).
+// Device class selectors (Device Setup prefix byte 41). Values from the X7SB3's own client
+// library; the byte is passed to the BMC's UDC ioctl. UNVERIFIED on live hardware — the one
+// decoded X10 capture used 0x03 for a CD, so confirm CD==4 on the X7SB3 during bring-up.
 const (
 	ClassRemovable byte = 0x01
 	ClassFloppy    byte = 0x02
@@ -169,8 +171,8 @@ func BuildEPSetupPacket() (Header, []byte) {
 // BuildKeepaliveRequest returns the client-initiated keepalive (tag 0x04). The BMC resets its
 // ~30 s idle timer on any inbound frame and replies with tag 0x03.
 func BuildKeepaliveRequest() (Header, []byte) {
-	payload := []byte{0xFF, 0xFF, 0xFF, 0xFF}
-	return Header{Tag: TagPingReq, PayloadLen: uint32(len(payload))}, payload
+	// The BMC ignores the request payload; the verified spec sends an empty one.
+	return Header{Tag: TagPingReq, PayloadLen: 0}, nil
 }
 
 // BuildKeepaliveResponse returns a tag 0x03 reply, echoing the request payload where present.

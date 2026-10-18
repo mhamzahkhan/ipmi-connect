@@ -19,6 +19,8 @@ const (
 	detachAckTimeout = 2 * time.Second
 	// maxBulkChunk bounds one bulk-IN data frame (the BMC's ring is ~260 KB).
 	maxBulkChunk = 64 * 1024
+	// controlOutMax bounds a non-write OUT transfer (e.g. MODE SELECT) to a read-only device.
+	controlOutMax = 64 * 1024
 )
 
 // deviceSession is one TCP connection carrying one emulated USB device (one drive). The ATEN
@@ -30,6 +32,8 @@ type deviceSession struct {
 	disk           uint16
 	tgtType        vmedia.Target
 	readOnly       bool
+	writable       bool
+	capacity       int64 // image size in bytes; bounds OUT transfers
 	keepaliveEvery time.Duration
 
 	writeMu      sync.Mutex
@@ -53,12 +57,13 @@ type setupOpts struct {
 	encrypt            bool
 }
 
-func newDeviceSession(conn net.Conn, target SCSITarget, disk uint16, tgtType vmedia.Target, readOnly bool, keepalive time.Duration) *deviceSession {
+func newDeviceSession(conn net.Conn, target SCSITarget, disk uint16, tgtType vmedia.Target, readOnly bool, capacity int64, keepalive time.Duration) *deviceSession {
 	if keepalive <= 0 {
 		keepalive = defaultKeepalive
 	}
 	return &deviceSession{
 		conn: conn, target: target, disk: disk, tgtType: tgtType, readOnly: readOnly,
+		writable: !readOnly, capacity: capacity,
 		keepaliveEvery: keepalive, done: make(chan struct{}),
 	}
 }
@@ -153,6 +158,7 @@ func (s *deviceSession) keepalive(ctx context.Context) {
 			// The client is the keepalive initiator: send tag 0x04, the BMC replies 0x03 (ignored).
 			h, payload := BuildKeepaliveRequest()
 			if err := s.writeFrame(h, payload); err != nil {
+				s.fail(err) // a dead peer: close so the serve reader unblocks instead of leaking
 				return
 			}
 		}
@@ -206,6 +212,16 @@ func (s *deviceSession) handleCBW(payload []byte) error {
 	out := cbw.Flags&0x80 == 0 && cbw.DataLen > 0
 
 	if out {
+		// Bound the transfer before allocating: a writable drive accepts up to its image size, a
+		// read-only one only a small control transfer (MODE SELECT etc.). A larger claim is a
+		// protocol violation from an untrusted BMC, so drop the session rather than allocate it.
+		limit := int64(controlOutMax)
+		if s.writable {
+			limit = s.capacity
+		}
+		if int64(cbw.DataLen) > limit {
+			return fmt.Errorf("oversized %d-byte OUT transfer (limit %d)", cbw.DataLen, limit)
+		}
 		data, err := s.readOutData(cbw.DataLen)
 		if err != nil {
 			return err

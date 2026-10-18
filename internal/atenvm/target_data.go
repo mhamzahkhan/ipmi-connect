@@ -158,7 +158,12 @@ func (t *scsiTarget) readTOC(cdb []byte, dataLen uint32) ([]byte, bool) {
 		return t.fail(senseIllegalRequest, ascInvalidField, 0)
 	}
 	msf := cdb[1]&0x02 != 0
+	// The format field moved between MMC revisions: modern hosts use byte 2 (bits 0-3), legacy
+	// ATAPI hosts (including the captured one) use byte 9 (bits 6-7). Accept either.
 	format := cdb[2] & 0x0F
+	if format == 0 {
+		format = cdb[9] >> 6
+	}
 	leadOut := t.sectors
 	switch format {
 	case 1: // session info

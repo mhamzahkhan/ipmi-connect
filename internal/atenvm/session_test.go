@@ -216,3 +216,64 @@ func TestGroupRejectsSecondDisk(t *testing.T) {
 		t.Error("second disk-type drive was accepted")
 	}
 }
+
+func TestOversizedOutCBWClosesSession(t *testing.T) {
+	g, conns := newGroupOverPipe(t, Credentials{Username: "t", Password: "t", IsSessionID: true})
+	img := &memImage{data: make([]byte, 8*SectorSizeDisk)}
+	mapErr := make(chan error, 1)
+	go func() {
+		_, err := g.Map(context.Background(), img, vmedia.MapOptions{Target: vmedia.TargetRemovable, Size: int64(len(img.data))})
+		mapErr <- err
+	}()
+	bmc := <-conns
+	bmc.handshake()
+	if err := <-mapErr; err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	// A WRITE claiming 4 GiB of data must not pre-allocate; the session is dropped instead.
+	bmc.cbw(9, 0xFFFFFFFF, false, CmdWrite10, 0, 0, 0, 0, 0, 0, 0, 1, 0)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(g.Drives()) > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("session with an oversized OUT CBW was not dropped")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestControlOutToReadOnlyCDSurvives(t *testing.T) {
+	g, conns := newGroupOverPipe(t, Credentials{Username: "t", Password: "t", IsSessionID: true, Encrypt: true})
+	img := &memImage{data: make([]byte, 4*SectorSizeCD)}
+	mapErr := make(chan error, 1)
+	go func() {
+		_, err := g.Map(context.Background(), img, vmedia.MapOptions{Target: vmedia.TargetCD, Size: int64(len(img.data))})
+		mapErr <- err
+	}()
+	bmc := <-conns
+	bmc.handshake()
+	if err := <-mapErr; err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	// MODE SELECT(6): a small OUT command to the CD. It must be refused (CSW fail) without
+	// killing the session.
+	bmc.cbw(1, 12, false, 0x15, 0x10, 0, 0, 12, 0)
+	bmc.write(Header{Endpoint: EndpointBulkOut, Tag: TagEnqueue, PayloadLen: 12}, make([]byte, 12))
+	_, csw := bmc.readResponse()
+	if csw.Status != CSWStatusCommandFail {
+		t.Errorf("MODE SELECT to CD: status %#x, want fail", csw.Status)
+	}
+	// The session is still alive: a following INQUIRY works.
+	bmc.cbw(2, 36, true, CmdInquiry, 0, 0, 0, 36, 0)
+	if data, _ := bmc.readResponse(); !bytes.Contains(data, []byte("CDROM")) {
+		t.Error("session did not survive a control OUT to the CD")
+	}
+}
+
+func TestReadTOCLegacyByte9Format(t *testing.T) {
+	tgt := NewISOTarget(&memImage{data: make([]byte, 4*SectorSizeCD)}, 4*SectorSizeCD)
+	// Legacy MMC/ATAPI selects session-info via byte 9 top bits (0x40), byte 2 = 0.
+	data, ok := tgt.Execute([]byte{CmdReadTOC, 0, 0, 0, 0, 0, 0, 0, 0x0c, 0x40}, 0x0c)
+	if !ok || len(data) != 12 || data[1] != 0x0A {
+		t.Errorf("legacy byte-9 format 1 not honoured: ok=%v data=% x", ok, data)
+	}
+}
