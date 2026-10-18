@@ -212,3 +212,6 @@ func (c *Client) PowerControl(action bmc.PowerAction) error {
 
 // PowerStatus reports "ON" or "OFF" from the web interface.
 func (c *Client) PowerStatus() (string, error) { return c.web.PowerStatus() }
+
+// PowerState implements bmc.PowerReader.
+func (c *Client) PowerState() (string, error) { return c.web.PowerStatus() }

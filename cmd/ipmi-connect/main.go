@@ -39,7 +39,7 @@ func main() {
 		Host:         opts.Host,
 		TargetType:   targetType,
 		Connected:    true,
-		PowerState:   "ONLINE",
+		PowerState:   bmc.PowerStateUnknown,
 		ScreenWidth:  1024,
 		ScreenHeight: 768,
 	})

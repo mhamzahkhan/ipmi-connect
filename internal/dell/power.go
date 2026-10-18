@@ -10,19 +10,19 @@ import (
 	"ipmi-connect/internal/bmc"
 )
 
-// GetPowerState queries the current chassis power status ("ONLINE" or "OFF").
+// GetPowerState queries the current chassis power status (bmc.PowerStateOn, Off or Unknown).
 func (c *Client) GetPowerState() (string, error) {
 	c.SessionMu.Lock()
 	defer c.SessionMu.Unlock()
 
 	if !c.IsLoggedIn || c.ST1Token == "" {
-		return "UNKNOWN", fmt.Errorf("client not logged in")
+		return bmc.PowerStateUnknown, fmt.Errorf("client not logged in")
 	}
 
 	urlStr := fmt.Sprintf("https://%s/data?get=pwState,&ST1=%s", c.Host, c.ST1Token)
 	req, err := http.NewRequest("POST", urlStr, strings.NewReader(""))
 	if err != nil {
-		return "UNKNOWN", err
+		return bmc.PowerStateUnknown, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if c.ST2Token != "" {
@@ -31,23 +31,26 @@ func (c *Client) GetPowerState() (string, error) {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "UNKNOWN", bmc.FormatError("Dell GetPowerState", err)
+		return bmc.PowerStateUnknown, bmc.FormatError("Dell GetPowerState", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "UNKNOWN", err
+		return bmc.PowerStateUnknown, err
 	}
 
 	body := string(bodyBytes)
 	if strings.Contains(body, "<pwState>1</pwState>") {
-		return "ONLINE", nil
+		return bmc.PowerStateOn, nil
 	} else if strings.Contains(body, "<pwState>0</pwState>") {
-		return "OFF", nil
+		return bmc.PowerStateOff, nil
 	}
-	return "UNKNOWN", nil
+	return bmc.PowerStateUnknown, nil
 }
+
+// PowerState implements bmc.PowerReader.
+func (c *Client) PowerState() (string, error) { return c.GetPowerState() }
 
 // PowerControl commands the chassis power state via Dell's AppWeb HTTP API using POST.
 func (c *Client) PowerControl(action bmc.PowerAction) error {

@@ -78,6 +78,11 @@ func fatalAfterLogin(client *dell.Client, format string, args ...any) {
 
 // pollDellSession keeps the WebGUI session alive and refreshes the reported power state.
 func pollDellSession(ctx context.Context, server *web.Server, client *dell.Client) {
+	if pwr, err := client.GetPowerState(); err == nil {
+		server.StateMu.Lock()
+		server.State.PowerState = pwr
+		server.StateMu.Unlock()
+	}
 	ticker := time.NewTicker(dellSessionPollInterval)
 	defer ticker.Stop()
 	for {

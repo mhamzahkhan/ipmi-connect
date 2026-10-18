@@ -27,17 +27,20 @@ var staticFS embed.FS
 
 // Server hosts the local web UI, REST API, and WebSocket streaming bridge.
 type Server struct {
-	State          bmc.SessionState
-	StateMu        sync.RWMutex
-	Console        bmc.Console // set once before Run; nil until the BMC is connected
-	clients        map[*wsClient]struct{}
-	clientsMu      sync.Mutex // guards clients
-	Port           int        // guarded by sessionMu once Run starts
-	HTTPServer     *http.Server
-	token          string     // per-run secret required by the API and WebSocket
-	launchCode     string     // one-time code in the launch link, exchanged for token
-	sessionMu      sync.Mutex // guards Port and launchCodeUsed
-	launchCodeUsed bool
+	State   bmc.SessionState
+	StateMu sync.RWMutex
+	Console bmc.Console // set once before Run; nil until the BMC is connected
+	// After a power action the power state is re-read this often, for this long.
+	powerFollowEvery time.Duration
+	powerFollowFor   time.Duration
+	clients          map[*wsClient]struct{}
+	clientsMu        sync.Mutex // guards clients
+	Port             int        // guarded by sessionMu once Run starts
+	HTTPServer       *http.Server
+	token            string     // per-run secret required by the API and WebSocket
+	launchCode       string     // one-time code in the launch link, exchanged for token
+	sessionMu        sync.Mutex // guards Port and launchCodeUsed
+	launchCodeUsed   bool
 
 	// Sockets are hijacked, so HTTPServer.Shutdown does not stop them: Run cancels connCtx and
 	// waits on connWG so each socket releases its held input before main logs out.
@@ -63,6 +66,9 @@ func NewServer(port int, state bmc.SessionState) *Server {
 		State:      state,
 		Port:       port,
 		clients:    make(map[*wsClient]struct{}),
+
+		powerFollowEvery: powerFollowInterval,
+		powerFollowFor:   powerFollowDuration,
 	}
 }
 

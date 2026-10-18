@@ -177,6 +177,18 @@ body {
   background-color: rgba(239, 68, 68, 0.1);
 }
 
+.btn-power-soft:hover {
+  color: var(--accent);
+  border-color: rgba(56, 189, 248, 0.3);
+  background-color: rgba(56, 189, 248, 0.1);
+}
+
+.power-bar .btn:disabled:hover {
+  color: inherit;
+  border-color: var(--border-color);
+  background-color: transparent;
+}
+
 .btn-power-cycle:hover {
   color: var(--warning);
   border-color: rgba(245, 158, 11, 0.3);
@@ -533,6 +545,30 @@ body {
 
 #pickerName {
   flex: 1;
+}
+
+.power-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+}
+
+.power-pill.on {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.power-pill.off {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.power-bar .btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .stat-media {

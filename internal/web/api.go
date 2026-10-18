@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"ipmi-connect/internal/bmc"
 )
@@ -48,5 +49,37 @@ func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	go s.followPower()
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "action": string(req.Action)})
+}
+
+const (
+	powerFollowInterval = time.Second
+	powerFollowDuration = 30 * time.Second
+)
+
+// followPower re-reads the power state every second for a while after a power action, so the
+// UI reflects it within a second or two instead of at the next slow poll.
+func (s *Server) followPower() {
+	reader, ok := s.Console.(bmc.PowerReader)
+	if !ok {
+		return
+	}
+	t := time.NewTicker(s.powerFollowEvery)
+	defer t.Stop()
+	stop := time.After(s.powerFollowFor)
+	for {
+		select {
+		case <-stop:
+			return
+		case <-s.connCtx.Done():
+			return
+		case <-t.C:
+			if state, err := reader.PowerState(); err == nil {
+				s.StateMu.Lock()
+				s.State.PowerState = state
+				s.StateMu.Unlock()
+			}
+		}
+	}
 }

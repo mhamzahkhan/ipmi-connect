@@ -13,3 +13,15 @@ type Console interface {
 	// PowerControl issues a chassis power command.
 	PowerControl(action PowerAction) error
 }
+
+// Host power states reported by PowerReader.
+const (
+	PowerStateOn      = "ON"
+	PowerStateOff     = "OFF"
+	PowerStateUnknown = "UNKNOWN"
+)
+
+// PowerReader is implemented by consoles that can read the host's power state.
+type PowerReader interface {
+	PowerState() (string, error)
+}

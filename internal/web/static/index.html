@@ -25,6 +25,7 @@
           <span class="status-dot connected" id="statusDot"></span>
           <span class="server-target" id="serverTarget">Connecting...</span>
           <span class="badge badge-vendor" id="vendorBadge">IPMI</span>
+          <span class="power-pill" id="powerPill" title="Host power state">Power ?</span>
         </div>
       </div>
 
@@ -34,6 +35,11 @@
           <button class="btn btn-power-on" id="btnPowerOn" title="Power On Server">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
             <span>Power On</span>
+          </button>
+
+          <button class="btn btn-power-soft" id="btnPowerSoft" title="Ask the operating system to shut down (ACPI power button)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="8"></line></svg>
+            <span>Shut Down</span>
           </button>
 
           <button class="btn btn-power-off" id="btnPowerOff" title="Force Power Off">

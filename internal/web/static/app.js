@@ -108,6 +108,7 @@ import { setupMedia } from '/media.js';
       // The server decodes the stream, so it reports the BMC's frame rate; the browser only sees
       // changes.
       statFPS.textContent = `FPS: ${data.fps || 0}`;
+      showPower(data.power_state);
       // Console notices such as "No video signal" or "View only"; empty when all is well.
       const notice = document.getElementById('statNotice');
       notice.textContent = data.status_text || '';
@@ -118,6 +119,30 @@ import { setupMedia } from '/media.js';
     } catch (e) {
       console.warn('Status poll error:', e);
     }
+  }
+
+  // Power state: a pill in the header, and buttons that make no sense in that state are disabled.
+  const POWER_ONLY_WHEN_ON = ['btnPowerSoft', 'btnPowerOff', 'btnPowerReset', 'btnPowerCycle'];
+  function showPower(state) {
+    const pill = document.getElementById('powerPill');
+    const on = state === 'ON';
+    const off = state === 'OFF';
+    pill.textContent = on ? 'Power On' : off ? 'Power Off' : 'Power ?';
+    pill.classList.toggle('on', on);
+    pill.classList.toggle('off', off);
+    document.getElementById('btnPowerOn').disabled = on;
+    for (const id of POWER_ONLY_WHEN_ON) document.getElementById(id).disabled = off;
+  }
+
+  // After a power action the server re-reads the state every second for 30 s; follow it.
+  let fastStatusUntil = 0;
+  function followPower() {
+    fastStatusUntil = Date.now() + 30000;
+    const tick = () => {
+      pollStatus();
+      if (Date.now() < fastStatusUntil) setTimeout(tick, 1000);
+    };
+    setTimeout(tick, 1000);
   }
 
   // WebSocket Setup
@@ -310,6 +335,9 @@ import { setupMedia } from '/media.js';
       powerModal.classList.add('open');
     }
 
+    document.getElementById('btnPowerSoft').addEventListener('click', () => {
+      openPowerConfirm('power_soft_off', 'Confirm Shut Down', 'Ask the operating system to shut down cleanly (like pressing the power button)? The host may take a while, or ignore it if no OS is running.');
+    });
     document.getElementById('btnPowerOn').addEventListener('click', () => {
       openPowerConfirm('power_on', 'Confirm Power On', 'Power on host system now?');
     });
@@ -340,6 +368,7 @@ import { setupMedia } from '/media.js';
           alert(`Power action failed: ${res.error || 'Server error'}`);
         } else {
           console.log(`Power action executed successfully:`, res);
+          followPower();
         }
       } catch (err) {
         alert(`Failed to execute power action: ${err.message}`);
