@@ -66,12 +66,13 @@ func digest(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// The live C6220 stream (720x400 BIOS text, YUV420, luma table 4, chroma table 7) must decode
-// to exactly what Aspeed's JS decoder produced for every frame, both in reference mode and with
-// the default (production) deviations, which only engage on truncated input or resizes.
+// A live C6220 stream (1024x768 console test pattern: colour bars, coloured text, an animated
+// bar) must decode to exactly what Aspeed's JS decoder produced for every frame, both in
+// reference mode and with the default (production) deviations, which only engage on truncated
+// input or resizes.
 func TestDecoderMatchesReferenceOnRecordedStream(t *testing.T) {
-	frames := readRecording(t, "testdata/c6220-text-720x400.bin")
-	golden := readGolden(t, "testdata/c6220-text-720x400.golden")
+	frames := readRecording(t, "testdata/c6220-pattern-1024x768.bin")
+	golden := readGolden(t, "testdata/c6220-pattern-1024x768.golden")
 	if len(frames) != len(golden) {
 		t.Fatalf("%d frames but %d golden lines", len(frames), len(golden))
 	}
@@ -95,7 +96,7 @@ func TestDecoderMatchesReferenceOnRecordedStream(t *testing.T) {
 
 // BenchmarkRecordedStream decodes the recorded C6220 stream; ns/op is per frame.
 func BenchmarkRecordedStream(b *testing.B) {
-	frames := readRecording(b, "testdata/c6220-text-720x400.bin")
+	frames := readRecording(b, "testdata/c6220-pattern-1024x768.bin")
 	d := NewDecoder()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
