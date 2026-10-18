@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"ipmi-connect/internal/bmc"
+	"ipmi-connect/internal/vmedia"
 )
 
 const (
@@ -40,11 +41,14 @@ type Client struct {
 	session *Session
 	running bool
 	stopped chan struct{} // closed when Run returns
+
+	// Manager provides virtual media (bmc.VirtualMedia) over ATEN Virtual Storage sessions.
+	*vmedia.Manager
 }
 
 // NewClient prepares a client; call Login, then Run.
 func NewClient(host, user, password string) *Client {
-	return &Client{
+	c := &Client{
 		host:    host,
 		web:     NewWebSession(host, user, password),
 		stopped: make(chan struct{}),
@@ -53,6 +57,8 @@ func NewClient(host, user, password string) *Client {
 			return d.DialContext(ctx, "tcp", addr)
 		},
 	}
+	c.Manager = vmedia.NewManager(c.openVMedia)
+	return c
 }
 
 // Login authenticates to the web interface; call it before Run so bad credentials fail fast.
@@ -150,6 +156,9 @@ func (c *Client) serveOnce(ctx context.Context, sink Sink) error {
 
 // Logout ends the web session once the KVM socket has closed (a web logout would kick it).
 func (c *Client) Logout() {
+	if c.Manager != nil {
+		c.Close()
+	}
 	c.mu.Lock()
 	running := c.running
 	c.mu.Unlock()
