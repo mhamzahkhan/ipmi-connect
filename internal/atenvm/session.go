@@ -177,13 +177,18 @@ func (s *Session) Map(ctx context.Context, img vmedia.Image, opts vmedia.MapOpti
 	}
 
 	blockSize := uint32(SectorSizeCD)
+	if opts.Target == vmedia.TargetCD {
+		s.target = NewISOTarget(img, opts.Size)
+	} else {
+		blockSize = uint32(SectorSizeDisk)
+		s.target = NewDiskTarget(img, opts.Size, opts.ReadOnly)
+	}
+
 	blocks := uint32(opts.Size / int64(blockSize))
 	if opts.Size%int64(blockSize) != 0 {
 		blocks++
 	}
 
-	// Create and attach SCSI target
-	s.target = NewISOTarget(img, opts.Size)
 	s.drives[disk] = &drive{
 		disk:      disk,
 		target:    opts.Target,
@@ -356,7 +361,22 @@ func (s *Session) serveCBW(cbw CBW) {
 	status := CSWStatusCommandFail
 	residue := cbw.DataLen
 
-	if target != nil {
+	// Handle Host-to-Device (OUT) transfer (WRITE commands)
+	if cbw.Flags&0x80 == 0 && cbw.DataLen > 0 {
+		hData, dataPayload, err := ReadFrame(s.conn)
+		if err != nil {
+			return
+		}
+		if target != nil && hData.Endpoint == EndpointBulkOut {
+			status = target.WriteData(cbw.CDB[:cbw.CDBLength], dataPayload)
+		}
+		s.mu.Lock()
+		for _, d := range s.drives {
+			d.bytesWritten += int64(len(dataPayload))
+		}
+		s.mu.Unlock()
+		residue = 0
+	} else if target != nil {
 		data, status, residue = target.ExecuteCDB(cbw.CDB[:cbw.CDBLength], cbw.DataLen)
 	}
 

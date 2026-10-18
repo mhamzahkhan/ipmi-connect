@@ -233,6 +233,11 @@ func (t *ISOTarget) readBlocks(lba, blocks, allocLen uint32) ([]byte, byte, uint
 	return buf, CSWStatusGood, residue
 }
 
+// WriteData returns CSWStatusCommandFail because an ISO is read-only.
+func (t *ISOTarget) WriteData(cdb []byte, data []byte) byte {
+	return CSWStatusCommandFail
+}
+
 // truncateData trims data to allocLen if allocLen is smaller, and calculates CSW residue.
 func truncateData(data []byte, allocLen uint32) ([]byte, byte, uint32) {
 	if allocLen == 0 {

@@ -17,6 +17,8 @@ const (
 	CmdReadDiscInformation        byte = 0x51
 	CmdReadTrackInformation       byte = 0x52
 	CmdModeSense10                byte = 0x5A
+	CmdWrite10                    byte = 0x2A
+	CmdWrite12                    byte = 0xAA
 	CmdRead12                     byte = 0xA8
 )
 
@@ -32,4 +34,7 @@ type SCSITarget interface {
 	// ExecuteCDB runs a SCSI command against the device.
 	// It returns the data to send back to the host, the CSW status code, and the CSW data residue.
 	ExecuteCDB(cdb []byte, allocLen uint32) (data []byte, status byte, residue uint32)
+
+	// WriteData processes host write-data received on Bulk-OUT for WRITE(10)/(12).
+	WriteData(cdb []byte, data []byte) byte
 }
