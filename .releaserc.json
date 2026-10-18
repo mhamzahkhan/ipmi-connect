@@ -41,8 +41,7 @@
       {
         "assets": [
           {
-            "path": "dist/*.tar.gz",
-            "label": "Binaries (${nextRelease.version})"
+            "path": "dist/*.tar.gz"
           },
           {
             "path": "dist/sha256sums.txt",
