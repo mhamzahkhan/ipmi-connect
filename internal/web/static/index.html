@@ -74,6 +74,11 @@
           <span class="media-badge" id="mediaBadge" hidden></span>
         </button>
 
+        <button class="btn" id="btnScale" title="Scaling">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+          <span id="scaleLabel">Fit</span>
+        </button>
+
         <!-- Fullscreen Button -->
         <button class="btn btn-icon" id="btnFullscreen" title="Toggle Fullscreen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
@@ -90,10 +95,10 @@
     <div class="macro-toolbar">
       <div class="macro-group">
         <span class="macro-label">Macros:</span>
-        <button class="btn-macro" data-macro="cad">Ctrl + Alt + Del</button>
-        <button class="btn-macro" data-macro="alt_tab">Alt + Tab</button>
-        <button class="btn-macro" data-macro="alt_f4">Alt + F4</button>
-        <button class="btn-macro" data-macro="win">Win Key</button>
+        <button class="btn-macro" data-macro="cad">Ctrl+Alt+Del</button>
+        <button class="btn-macro" data-macro="alt_tab">Alt+Tab</button>
+        <button class="btn-macro" data-macro="alt_f4">Alt+F4</button>
+        <button class="btn-macro" data-macro="win">Win</button>
         <button class="btn-macro" data-macro="esc">Esc</button>
         <button class="btn-macro" data-macro="print_screen">PrtScr</button>
       </div>
@@ -101,12 +106,12 @@
       <div class="macro-divider"></div>
 
       <div class="macro-group function-keys">
-        <span class="macro-label">BIOS / Boot:</span>
+        <span class="macro-label">Boot:</span>
         <button class="btn-macro" data-macro="f1">F1</button>
-        <button class="btn-macro" data-macro="f2">F2 (Setup)</button>
-        <button class="btn-macro" data-macro="f10">F10 (Utility)</button>
-        <button class="btn-macro" data-macro="f11">F11 (Boot Menu)</button>
-        <button class="btn-macro" data-macro="f12">F12 (PXE)</button>
+        <button class="btn-macro" data-macro="f2">F2 Setup</button>
+        <button class="btn-macro" data-macro="f10">F10 Utility</button>
+        <button class="btn-macro" data-macro="f11">F11 Boot</button>
+        <button class="btn-macro" data-macro="f12">F12 PXE</button>
       </div>
 
       <div class="macro-stats" id="streamStats">

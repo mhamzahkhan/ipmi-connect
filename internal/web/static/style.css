@@ -235,6 +235,9 @@ body {
 /* Macro Toolbar */
 .macro-toolbar {
   height: 38px;
+  overflow-x: auto; /* narrow windows scroll the macros rather than wrapping them */
+  overflow-y: hidden;
+  scrollbar-width: none;
   background-color: var(--bg-card);
   border-bottom: 1px solid var(--border-color);
   display: flex;
@@ -245,6 +248,7 @@ body {
 }
 
 .macro-group {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -259,6 +263,7 @@ body {
 }
 
 .btn-macro {
+  white-space: nowrap;
   background-color: var(--bg-tertiary);
   color: var(--text-secondary);
   border: 1px solid var(--border-color);
@@ -666,8 +671,13 @@ body {
 }
 
 /* Viewport & Canvas */
+.console-viewport:fullscreen {
+  padding: 0;
+}
+
 .console-viewport {
   flex: 1;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -3,6 +3,7 @@ import { KEY_TO_HID } from '/keymap.js';
 import { setupMedia } from '/media.js';
 import { setupPaste } from '/paste.js';
 import { toast } from '/toast.js';
+import { setupView } from '/view.js';
 
 (function() {
   'use strict';
@@ -102,6 +103,7 @@ import { toast } from '/toast.js';
     setupMacros();
     setupMedia(apiFetch);
     paste = setupPaste(sendMessage);
+    setupView(canvas, document.getElementById('viewport'), () => isConnected);
     setupFullscreenAndScreenshot();
     pollStatus();
     setInterval(pollStatus, 3000);
@@ -400,13 +402,6 @@ import { toast } from '/toast.js';
 
   // Fullscreen & Screenshot
   function setupFullscreenAndScreenshot() {
-    document.getElementById('btnFullscreen').addEventListener('click', () => {
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(err => {});
-      } else {
-        document.exitFullscreen();
-      }
-    });
 
     document.getElementById('btnScreenshot').addEventListener('click', () => {
       const a = document.createElement('a');
