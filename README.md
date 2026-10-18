@@ -18,10 +18,10 @@ The protocols were reverse-engineered from the vendors' JARs. Nothing from those
 | Login / clean logout | Works | Works |
 | Live video | Works (Go ASPEED decoder, verified frame-for-frame against Aspeed's reference) | Works (Go Hermon decoder) |
 | Keyboard | Works (USB HID) | Works (USB HID) |
-| Mouse | Works | Implemented (incl. AES variant), not yet confirmed on hardware |
+| Mouse | Works | Works (absolute position and buttons verified on hardware) |
 | Macros (Ctrl+Alt+Del, F-keys…) | Works | Implemented |
 | Power control | Works | Status verified; commands over the KVM socket or `ipmi.cgi` |
-| Virtual media | Works: ISO on CD/DVD (booted an installer), IMG on removable or floppy (read-write), Create Image, transfer graph, USB reset | ISO on CD (read back byte-exact on hardware); IMG on removable or floppy (reads verified on hardware, writes not yet) |
+| Virtual media | Works: ISO on CD/DVD (booted an installer), IMG on removable or floppy (read-write), Create Image, transfer graph, USB reset | Works: ISO on CD, IMG on removable or floppy (read-write), Create Image (blank or from a folder), all verified byte-exact on hardware; one drive at a time, see known issues |
 
 ## Quick start
 
@@ -74,5 +74,5 @@ docs/                  Hardware inventory, protocol specs, per-vendor deep dives
 
 ## Known issues
 
-- Supermicro mouse and virtual media writes: see the status table.
+- Supermicro: while the BMC's own web-UI media mount is active, it has one free virtual media slot, so a second drive is refused with "slots are full or busy".
 - `--port` is accepted for compatibility but ignored.
