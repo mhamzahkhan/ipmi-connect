@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"ipmi-connect/internal/atenvm"
+	"ipmi-connect/internal/vmedia"
 )
 
 // patternReader fills reads with a byte pattern derived from the offset (for READ tests).
@@ -23,7 +24,12 @@ func (p *patternReader) WriteAt(b []byte, off int64) (int, error) { return len(b
 // notes/supermicro-vmedia-capture-decode.md Appendix B); they are the regression fixtures.
 func TestCDGoldenResponses(t *testing.T) {
 	const sectors = 8192
-	tgt := atenvm.NewISOTarget(&patternReader{size: sectors * atenvm.SectorSizeCD}, sectors*atenvm.SectorSizeCD)
+	drive, err := vmedia.NewDrive(&patternReader{size: sectors * atenvm.SectorSizeCD},
+		vmedia.MapOptions{Target: vmedia.TargetCD, Size: sectors * atenvm.SectorSizeCD})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt := atenvm.NewTarget(drive)
 
 	// INQUIRY
 	check(t, tgt, "INQUIRY", "120000002400", 36,

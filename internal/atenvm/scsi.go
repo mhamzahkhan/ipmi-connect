@@ -45,54 +45,33 @@ type SCSITarget interface {
 	WriteData(cdb []byte, data []byte) byte
 }
 
-// scsiBase holds state shared by the CD-ROM and disk targets.
-type scsiBase struct {
-	sectors   uint32
-	blockSize uint32
-	sense     senseState
-	newMedia  bool // reported once via GET EVENT STATUS / cleared after the first TEST UNIT READY
-}
-
 // readLBA validates an LBA/block count against the medium and returns the data, bounded by the
-// host transfer length. A short or malformed request, an out-of-range LBA, or a read error sets
-// sense and returns ok=false.
-func (b *scsiBase) readLBA(r reader, lba, blocks, dataLen uint32) ([]byte, bool) {
+// host transfer length. An out-of-range LBA or a read error sets sense and returns ok=false.
+func (t *scsiTarget) readLBA(lba, blocks, dataLen uint32) ([]byte, bool) {
 	if dataLen == 0 || blocks == 0 {
 		return nil, true // nothing to transfer
 	}
-	// uint64 throughout: blocks and sectors are uint32, so lba+blocks can exceed 2^32.
-	end := uint64(lba) + uint64(blocks)
-	if end > uint64(b.sectors) {
-		b.sense.set(senseIllegalRequest, ascLBAOutOfRange, 0)
-		return nil, false
+	d := t.drive
+	if !d.Contains(lba, blocks) {
+		return t.fail(senseIllegalRequest, ascLBAOutOfRange, 0)
 	}
-	want := uint64(blocks) * uint64(b.blockSize)
-	if want > uint64(dataLen) {
-		want = uint64(dataLen) // the host asked for fewer bytes than a whole sector run
-	}
-	buf := make([]byte, want)
-	off := int64(lba) * int64(b.blockSize)
-	if _, err := r.ReadAt(buf, off); err != nil {
-		b.sense.set(senseMediumError, ascUnrecoveredRead, 0)
-		return nil, false
+	// The host may ask for fewer bytes than the whole sector run.
+	buf := make([]byte, min(uint64(blocks)*uint64(d.BlockSize), uint64(dataLen)))
+	if _, err := d.ReadAt(buf, int64(lba)*int64(d.BlockSize)); err != nil {
+		return t.fail(senseMediumError, ascUnrecoveredRead, 0)
 	}
 	return buf, true
 }
 
 // requestSense returns the pending sense, truncated to the host transfer length.
-func (b *scsiBase) requestSense(dataLen uint32) ([]byte, bool) {
-	return clamp(b.sense.take(), dataLen), true
+func (t *scsiTarget) requestSense(dataLen uint32) ([]byte, bool) {
+	return clamp(t.sense.take(), dataLen), true
 }
 
 // fail sets sense and returns a CHECK CONDITION result.
-func (b *scsiBase) fail(key, asc, ascq byte) ([]byte, bool) {
-	b.sense.set(key, asc, ascq)
+func (t *scsiTarget) fail(key, asc, ascq byte) ([]byte, bool) {
+	t.sense.set(key, asc, ascq)
 	return nil, false
-}
-
-// reader is the read side of an image.
-type reader interface {
-	ReadAt(p []byte, off int64) (int, error)
 }
 
 // clamp trims data to at most dataLen bytes (the SCSI/USB transfer length).

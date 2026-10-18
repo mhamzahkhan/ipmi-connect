@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"ipmi-connect/internal/vmedia"
@@ -28,17 +27,12 @@ const (
 // mapped drive.
 type deviceSession struct {
 	conn           net.Conn
+	drive          *vmedia.Drive
 	target         SCSITarget
 	disk           uint16
-	tgtType        vmedia.Target
-	readOnly       bool
-	writable       bool
-	capacity       int64 // image size in bytes; bounds OUT transfers
 	keepaliveEvery time.Duration
 
-	writeMu      sync.Mutex
-	bytesRead    atomic.Int64
-	bytesWritten atomic.Int64
+	writeMu sync.Mutex
 
 	stop      context.CancelFunc
 	done      chan struct{}
@@ -57,13 +51,12 @@ type setupOpts struct {
 	encrypt            bool
 }
 
-func newDeviceSession(conn net.Conn, target SCSITarget, disk uint16, tgtType vmedia.Target, readOnly bool, capacity int64, keepalive time.Duration) *deviceSession {
+func newDeviceSession(conn net.Conn, drive *vmedia.Drive, disk uint16, keepalive time.Duration) *deviceSession {
 	if keepalive <= 0 {
 		keepalive = defaultKeepalive
 	}
 	return &deviceSession{
-		conn: conn, target: target, disk: disk, tgtType: tgtType, readOnly: readOnly,
-		writable: !readOnly, capacity: capacity,
+		conn: conn, drive: drive, target: NewTarget(drive), disk: disk,
 		keepaliveEvery: keepalive, done: make(chan struct{}),
 	}
 }
@@ -216,8 +209,8 @@ func (s *deviceSession) handleCBW(payload []byte) error {
 		// read-only one only a small control transfer (MODE SELECT etc.). A larger claim is a
 		// protocol violation from an untrusted BMC, so drop the session rather than allocate it.
 		limit := int64(controlOutMax)
-		if s.writable {
-			limit = s.capacity
+		if !s.drive.ReadOnly {
+			limit = s.drive.Size()
 		}
 		if int64(cbw.DataLen) > limit {
 			return fmt.Errorf("oversized %d-byte OUT transfer (limit %d)", cbw.DataLen, limit)
@@ -226,11 +219,7 @@ func (s *deviceSession) handleCBW(payload []byte) error {
 		if err != nil {
 			return err
 		}
-		status := s.target.WriteData(cdb, data)
-		if status == CSWStatusGood {
-			s.bytesWritten.Add(int64(len(data)))
-		}
-		return s.sendCSW(cbw.Tag, cbw.DataLen, 0, status)
+		return s.sendCSW(cbw.Tag, cbw.DataLen, 0, s.target.WriteData(cdb, data))
 	}
 
 	data, ok := s.target.Execute(cdb, cbw.DataLen)
@@ -242,7 +231,6 @@ func (s *deviceSession) handleCBW(payload []byte) error {
 		if err := s.sendData(data); err != nil {
 			return err
 		}
-		s.bytesRead.Add(int64(len(data)))
 	}
 	residue := cbw.DataLen - uint32(len(data))
 	return s.sendCSW(cbw.Tag, cbw.DataLen, residue, status)
@@ -294,16 +282,7 @@ func (s *deviceSession) sendCSW(tag, dataLen, residue uint32, status byte) error
 	return s.writeFrame(h, csw.Encode())
 }
 
-func (s *deviceSession) status() vmedia.DriveStatus {
-	blockSize := uint32(SectorSizeCD)
-	if s.tgtType != vmedia.TargetCD {
-		blockSize = SectorSizeDisk
-	}
-	return vmedia.DriveStatus{
-		Disk: s.disk, Target: s.tgtType, ReadOnly: s.readOnly, BlockSize: blockSize,
-		BytesRead: s.bytesRead.Load(), BytesWritten: s.bytesWritten.Load(),
-	}
-}
+func (s *deviceSession) status() vmedia.DriveStatus { return s.drive.Status(s.disk) }
 
 func (s *deviceSession) lastErr() error {
 	s.mu.Lock()

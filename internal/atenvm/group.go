@@ -67,10 +67,11 @@ func slotFor(t vmedia.Target) (class, port byte, descriptors []byte, err error) 
 
 // Map attaches an image on its own connection and returns a drive id (the target value).
 func (g *Group) Map(ctx context.Context, img vmedia.Image, opts vmedia.MapOptions) (uint16, error) {
-	if opts.Size <= 0 {
-		return 0, errors.New("image size must be positive")
-	}
 	class, port, descriptors, err := slotFor(opts.Target)
+	if err != nil {
+		return 0, err
+	}
+	drive, err := vmedia.NewDrive(img, opts)
 	if err != nil {
 		return 0, err
 	}
@@ -101,18 +102,10 @@ func (g *Group) Map(ctx context.Context, img vmedia.Image, opts vmedia.MapOption
 		return 0, fmt.Errorf("connect virtual media: %w", err)
 	}
 
-	var target SCSITarget
-	readOnly := opts.ReadOnly || opts.Target == vmedia.TargetCD
-	if opts.Target == vmedia.TargetCD {
-		target = NewISOTarget(img, opts.Size)
-	} else {
-		target = NewDiskTarget(img, opts.Size, readOnly)
-	}
-
 	g.mu.Lock()
 	keepalive := g.keepalive
 	g.mu.Unlock()
-	ds := newDeviceSession(conn, target, disk, opts.Target, readOnly, opts.Size, keepalive)
+	ds := newDeviceSession(conn, drive, disk, keepalive)
 	if err := ds.open(ctx, setupOpts{
 		username: creds.Username, password: creds.Password, isSessionID: creds.IsSessionID,
 		portIndex: port, class: class, descriptors: descriptors, encrypt: creds.Encrypt,
@@ -151,7 +144,7 @@ func (g *Group) Drives() []vmedia.DriveStatus {
 		case <-ds.done: // the connection dropped
 			delete(g.devices, disk)
 			if err := ds.lastErr(); err != nil {
-				g.lastEvent = fmt.Sprintf("%s drive disconnected: %v", ds.tgtType, err)
+				g.lastEvent = fmt.Sprintf("%s drive disconnected: %v", ds.drive.Target, err)
 			}
 		default:
 			res = append(res, ds.status())

@@ -270,7 +270,7 @@ func TestControlOutToReadOnlyCDSurvives(t *testing.T) {
 }
 
 func TestReadTOCLegacyByte9Format(t *testing.T) {
-	tgt := NewISOTarget(&memImage{data: make([]byte, 4*SectorSizeCD)}, 4*SectorSizeCD)
+	tgt := isoTarget(t, &memImage{data: make([]byte, 4*SectorSizeCD)}, 4*SectorSizeCD)
 	// Legacy MMC/ATAPI selects session-info via byte 9 top bits (0x40), byte 2 = 0.
 	data, ok := tgt.Execute([]byte{CmdReadTOC, 0, 0, 0, 0, 0, 0, 0, 0x0c, 0x40}, 0x0c)
 	if !ok || len(data) != 12 || data[1] != 0x0A {

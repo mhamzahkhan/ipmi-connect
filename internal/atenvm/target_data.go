@@ -17,7 +17,7 @@ func (t *scsiTarget) inquiry(cdb []byte, dataLen uint32) ([]byte, bool) {
 		return t.fail(senseIllegalRequest, ascInvalidField, 0)
 	}
 	var inq []byte
-	if t.kind == kindCD {
+	if t.isCD() {
 		inq = []byte{
 			0x05, 0x80, 0x00, 0x21, 0x1F, 0x00, 0x00, 0x00,
 			'A', 'T', 'E', 'N', ' ', ' ', ' ', ' ',
@@ -41,27 +41,26 @@ func (t *scsiTarget) inquiry(cdb []byte, dataLen uint32) ([]byte, bool) {
 
 func (t *scsiTarget) readCapacity(dataLen uint32) ([]byte, bool) {
 	b := make([]byte, 8)
-	binary.BigEndian.PutUint32(b[0:4], t.sectors-1)
-	binary.BigEndian.PutUint32(b[4:8], t.blockSize)
+	binary.BigEndian.PutUint32(b[0:4], t.drive.Blocks-1)
+	binary.BigEndian.PutUint32(b[4:8], t.drive.BlockSize)
 	return respond(b, 0, dataLen)
 }
 
 func (t *scsiTarget) readFormatCapacities(dataLen uint32) ([]byte, bool) {
 	b := make([]byte, 12)
 	binary.BigEndian.PutUint32(b[0:4], 8)
-	binary.BigEndian.PutUint32(b[4:8], t.sectors)
-	b[8] = 0x02 // formatted media
-	binary.BigEndian.PutUint32(b[8:12], (uint32(0x02)<<24)|t.blockSize)
+	binary.BigEndian.PutUint32(b[4:8], t.drive.Blocks)
+	binary.BigEndian.PutUint32(b[8:12], (uint32(0x02)<<24)|t.drive.BlockSize) // 0x02: formatted media
 	return respond(b, 0, dataLen)
 }
 
 func (t *scsiTarget) modeSense(cdb []byte, dataLen uint32, long bool) ([]byte, bool) {
 	wp := byte(0x00)
-	if t.readOnly && t.kind == kindDisk {
+	if t.drive.ReadOnly && !t.isCD() {
 		wp = 0x80
 	}
 	var page2A []byte
-	if t.kind == kindCD {
+	if t.isCD() {
 		page2A = []byte{
 			0x2A, 0x1C, 0x3F, 0x00, 0x71, 0x77, 0x29, 0x23,
 			0x1B, 0x90, 0x01, 0x00, 0x00, 0xC6, 0x1B, 0x90,
@@ -140,7 +139,7 @@ func (t *scsiTarget) executeMMC(cdb []byte, dataLen uint32) (data []byte, ok, ha
 	case CmdReadTrackInformation:
 		tr := make([]byte, 28)
 		copy(tr[0:8], []byte{0x00, 0x1C, 0x01, 0x01, 0x00, 0x04, 0x01, 0x00})
-		binary.BigEndian.PutUint32(tr[24:28], t.sectors)
+		binary.BigEndian.PutUint32(tr[24:28], t.drive.Blocks)
 		d, o := respond(tr, allocAt(cdb, 7), dataLen)
 		return d, o, true
 	case CmdMechanismStatus:
@@ -164,7 +163,7 @@ func (t *scsiTarget) readTOC(cdb []byte, dataLen uint32) ([]byte, bool) {
 	if format == 0 {
 		format = cdb[9] >> 6
 	}
-	leadOut := t.sectors
+	leadOut := t.drive.Blocks
 	switch format {
 	case 1: // session info
 		toc := []byte{0x00, 0x0A, 0x01, 0x01, 0x00, 0x14, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00}
