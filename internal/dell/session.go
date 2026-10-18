@@ -38,7 +38,7 @@ func encodeSetValue(val string) string {
 
 // FetchCSRFTokens requests index.html with active cookies to acquire current ST1 and ST2 tokens.
 func (c *Client) FetchCSRFTokens() error {
-	urlStr := fmt.Sprintf("https://%s/index.html", c.Host)
+	urlStr := fmt.Sprintf("%s/index.html", bmc.BaseURL(c.Host))
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
 		return bmc.FormatError("Dell FetchCSRFTokens", err)
@@ -81,13 +81,13 @@ func (c *Client) Login() error {
 	c.SessionMu.Lock()
 	defer c.SessionMu.Unlock()
 
-	initURL := fmt.Sprintf("https://%s/login.html", c.Host)
+	initURL := fmt.Sprintf("%s/login.html", bmc.BaseURL(c.Host))
 	initReq, _ := http.NewRequest("GET", initURL, nil)
 	if initResp, err := c.HTTPClient.Do(initReq); err == nil {
 		initResp.Body.Close()
 	}
 
-	loginURL := fmt.Sprintf("https://%s/data/login", c.Host)
+	loginURL := fmt.Sprintf("%s/data/login", bmc.BaseURL(c.Host))
 	escapedPass := url.QueryEscape(encodeSetValue(c.Password))
 	data := fmt.Sprintf("user=%s&password=%s", url.QueryEscape(c.User), escapedPass)
 
@@ -138,7 +138,7 @@ func (c *Client) Logout() {
 		return
 	}
 
-	logoutURL := fmt.Sprintf("https://%s/data/logout?ST1=%s", c.Host, c.ST1Token)
+	logoutURL := fmt.Sprintf("%s/data/logout?ST1=%s", bmc.BaseURL(c.Host), c.ST1Token)
 	req, err := http.NewRequest("GET", logoutURL, nil)
 	if err == nil {
 		if c.ST2Token != "" {
@@ -166,7 +166,7 @@ type JNLPResponse struct {
 func (c *Client) FetchKVMParameters() error {
 	ts := time.Now().UnixMilli()
 	st1, _ := c.csrfTokens()
-	urlStr := fmt.Sprintf("https://%s/viewer.jnlp(%s@0@%d)?ST1=%s", c.Host, c.Host, ts, st1)
+	urlStr := fmt.Sprintf("%s/viewer.jnlp(%s@0@%d)?ST1=%s", bmc.BaseURL(c.Host), c.Host, ts, st1)
 
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
@@ -261,7 +261,7 @@ func (c *Client) KeepAlive() error {
 		return nil
 	}
 
-	urlStr := fmt.Sprintf("https://%s/data/keepGUISessionAlive?ST1=%s", c.Host, c.ST1Token)
+	urlStr := fmt.Sprintf("%s/data/keepGUISessionAlive?ST1=%s", bmc.BaseURL(c.Host), c.ST1Token)
 	req, err := http.NewRequest("POST", urlStr, strings.NewReader(""))
 	if err != nil {
 		return err

@@ -26,7 +26,10 @@ func detectVendor(host string) bmc.TargetType {
 	}
 
 	client := bmc.NewLegacyHTTPClient(probeHTTPTimeout)
-	req, _ := http.NewRequest("GET", fmt.Sprintf("https://%s/", host), nil)
+	req, err := http.NewRequest("GET", bmc.BaseURL(host)+"/", nil)
+	if err != nil {
+		return bmc.TargetDell
+	}
 	if resp, err := client.Do(req); err == nil {
 		defer resp.Body.Close()
 		serverHeader := strings.ToLower(resp.Header.Get("Server"))

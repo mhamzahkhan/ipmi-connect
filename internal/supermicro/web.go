@@ -38,7 +38,7 @@ func NewWebSession(host, user, password string) *WebSession {
 	return &WebSession{host: host, user: user, password: password, http: c, ticketRetryDelay: time.Second}
 }
 
-func (w *WebSession) url(path string) string { return "https://" + w.host + path }
+func (w *WebSession) url(path string) string { return bmc.BaseURL(w.host) + path }
 
 // do sends a request with the session cookies and returns the (bounded) body.
 func (w *WebSession) do(method, path string, form url.Values) (string, error) {

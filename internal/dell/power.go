@@ -19,7 +19,7 @@ func (c *Client) GetPowerState() (string, error) {
 		return bmc.PowerStateUnknown, fmt.Errorf("client not logged in")
 	}
 
-	urlStr := fmt.Sprintf("https://%s/data?get=pwState,&ST1=%s", c.Host, c.ST1Token)
+	urlStr := fmt.Sprintf("%s/data?get=pwState,&ST1=%s", bmc.BaseURL(c.Host), c.ST1Token)
 	req, err := http.NewRequest("POST", urlStr, strings.NewReader(""))
 	if err != nil {
 		return bmc.PowerStateUnknown, err
@@ -60,7 +60,7 @@ func (c *Client) PowerControl(action bmc.PowerAction) error {
 	}
 
 	st1, st2 := c.csrfTokens()
-	urlStr := fmt.Sprintf("https://%s/data?ST1=%s&set=pwState:%s", c.Host, st1, stateStr)
+	urlStr := fmt.Sprintf("%s/data?ST1=%s&set=pwState:%s", bmc.BaseURL(c.Host), st1, stateStr)
 	req, err := http.NewRequest("POST", urlStr, strings.NewReader(""))
 	if err != nil {
 		return bmc.FormatError("Dell PowerControl NewRequest", err)
