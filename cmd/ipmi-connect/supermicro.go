@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"ipmi-connect/internal/bmc"
 	"ipmi-connect/internal/supermicro"
 	"ipmi-connect/internal/web"
 )
@@ -37,7 +38,7 @@ func pollSupermicroPower(ctx context.Context, server *web.Server, client *superm
 		state, err := client.PowerStatus()
 		if err != nil {
 			log.Printf("[Supermicro] Power status: %v", err)
-			return
+			state = bmc.PowerStateUnknown // a stale value could hide the real state
 		}
 		server.StateMu.Lock()
 		server.State.PowerState = state

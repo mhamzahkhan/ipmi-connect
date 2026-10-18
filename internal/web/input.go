@@ -17,13 +17,13 @@ type inputState struct {
 	buttons byte
 	x, y    uint16
 	lastErr string // last logged input error, so a persistent failure logs once, not per event
-	// typing is set while a paste is being typed: live keys and pointer moves from this browser
-	// are dropped so they cannot interleave with it.
-	typing atomic.Bool
+	// typing is set while a paste is being typed (server-wide, shared by every browser): live
+	// keys, pointer moves and macros are dropped so they cannot interleave with it.
+	typing *atomic.Bool
 }
 
 func newInputState(console bmc.Console) *inputState {
-	return &inputState{console: console, held: map[uint16]bool{}}
+	return &inputState{console: console, held: map[uint16]bool{}, typing: new(atomic.Bool)}
 }
 
 // clientMessage is a JSON message from the browser.
@@ -36,6 +36,7 @@ type clientMessage struct {
 	Y       uint16 `json:"y"`
 	Name    string `json:"name"`
 	Text    string `json:"text"`
+	ID      string `json:"id"`
 }
 
 // handle dispatches one browser message. Malformed messages are ignored.

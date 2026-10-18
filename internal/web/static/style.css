@@ -679,8 +679,9 @@ body {
   flex: 1;
   min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  /* "safe" keeps a picture larger than the window scrollable to its top-left corner. */
+  align-items: safe center;
+  justify-content: safe center;
   background-color: #050608;
   position: relative;
   overflow: auto;

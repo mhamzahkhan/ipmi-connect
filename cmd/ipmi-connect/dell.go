@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ipmi-connect/internal/aspeed"
+	"ipmi-connect/internal/bmc"
 	"ipmi-connect/internal/dell"
 	"ipmi-connect/internal/web"
 )
@@ -78,11 +79,7 @@ func fatalAfterLogin(client *dell.Client, format string, args ...any) {
 
 // pollDellSession keeps the WebGUI session alive and refreshes the reported power state.
 func pollDellSession(ctx context.Context, server *web.Server, client *dell.Client) {
-	if pwr, err := client.GetPowerState(); err == nil {
-		server.StateMu.Lock()
-		server.State.PowerState = pwr
-		server.StateMu.Unlock()
-	}
+	setPower(server, client)
 	ticker := time.NewTicker(dellSessionPollInterval)
 	defer ticker.Stop()
 	for {
@@ -93,13 +90,20 @@ func pollDellSession(ctx context.Context, server *web.Server, client *dell.Clien
 			if err := client.KeepAlive(); err != nil {
 				log.Printf("[Dell] KeepAlive notice: %v", err)
 			}
-			if pwr, err := client.GetPowerState(); err == nil {
-				server.StateMu.Lock()
-				server.State.PowerState = pwr
-				server.StateMu.Unlock()
-			}
+			setPower(server, client)
 		}
 	}
+}
+
+// setPower records the host power state; a failed read is UNKNOWN rather than a stale value.
+func setPower(server *web.Server, client *dell.Client) {
+	pwr, err := client.GetPowerState()
+	if err != nil {
+		pwr = bmc.PowerStateUnknown
+	}
+	server.StateMu.Lock()
+	server.State.PowerState = pwr
+	server.StateMu.Unlock()
 }
 
 // streamDellVideo reassembles ASPEED frames from video packets and forwards them to the browser.

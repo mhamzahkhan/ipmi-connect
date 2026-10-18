@@ -22,26 +22,44 @@ type outMessage struct {
 // wsClient is one connected browser. A dedicated writer drains out, so a slow browser only
 // delays itself.
 type wsClient struct {
-	out chan outMessage
+	out  chan outMessage // video and frame updates; may be drained when the browser falls behind
+	ctrl chan outMessage // replies to the browser (e.g. paste results); never drained, sent first
 }
 
+// ctrlQueueLen bounds pending control replies; they are rare and small.
+const ctrlQueueLen = 8
+
 func newWSClient() *wsClient {
-	return &wsClient{out: make(chan outMessage, clientQueueLen)}
+	return &wsClient{out: make(chan outMessage, clientQueueLen), ctrl: make(chan outMessage, ctrlQueueLen)}
 }
 
 // writeLoop sends queued messages until ctx ends or a write fails; failure calls cancel so the
 // connection's reader stops too.
 func (c *wsClient) writeLoop(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn) {
 	defer cancel()
+	write := func(m outMessage) bool {
+		wctx, wcancel := context.WithTimeout(ctx, clientWriteTimeout)
+		defer wcancel()
+		return conn.Write(wctx, m.typ, m.data) == nil
+	}
 	for {
+		select { // control replies first
+		case m := <-c.ctrl:
+			if !write(m) {
+				return
+			}
+			continue
+		default:
+		}
 		select {
 		case <-ctx.Done():
 			return
+		case m := <-c.ctrl:
+			if !write(m) {
+				return
+			}
 		case m := <-c.out:
-			wctx, wcancel := context.WithTimeout(ctx, clientWriteTimeout)
-			err := conn.Write(wctx, m.typ, m.data)
-			wcancel()
-			if err != nil {
+			if !write(m) {
 				return
 			}
 		}

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"ipmi-connect/internal/bmc"
@@ -33,7 +34,11 @@ type Server struct {
 	// After a power action the power state is re-read this often, for this long.
 	powerFollowEvery time.Duration
 	powerFollowFor   time.Duration
-	typeMu           sync.Mutex    // one paste typed at a time
+	typeMu           sync.Mutex  // one paste typed at a time
+	typing           atomic.Bool // a paste is being typed: live input from every browser is held off
+	followMu         sync.Mutex  // guards followUntil and following
+	followUntil      time.Time
+	following        bool
 	typeDelay        time.Duration // between typed key events
 	clients          map[*wsClient]struct{}
 	clientsMu        sync.Mutex // guards clients

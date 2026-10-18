@@ -71,6 +71,7 @@ func typeKey(send func(bool, uint16) error, k textkeys.Key) error {
 		defer func() { _ = send(false, textkeys.LeftShift) }()
 	}
 	if err := send(true, k.Usage); err != nil {
+		_ = send(false, k.Usage) // the press may have reached the host anyway
 		return err
 	}
 	return send(false, k.Usage)
@@ -90,19 +91,21 @@ func (s *Server) handleTyping(ctx context.Context, client *wsClient, in *inputSt
 			(*cancel)()
 		}
 	case "type":
-		if in.typing.Load() {
-			s.reply(client, map[string]any{"type": "typed", "error": "already typing a paste"})
+		if !s.typing.CompareAndSwap(false, true) {
+			// Echo the id so the browser can tell this refusal from its running paste's result.
+			s.reply(client, map[string]any{"type": "typed", "id": msg.ID, "error": "already typing a paste"})
 			return
 		}
 		in.releaseAll() // keys held in the browser would modify the typed text
 		tctx, tcancel := context.WithCancel(ctx)
 		*cancel = tcancel
-		in.typing.Store(true)
+		s.connWG.Add(1) // shutdown waits for the keys to be released
 		go func() {
+			defer s.connWG.Done()
 			defer tcancel()
 			n, skipped, err := s.typeText(tctx, msg.Text)
-			in.typing.Store(false)
-			res := map[string]any{"type": "typed", "count": n, "skipped": skipped}
+			s.typing.Store(false)
+			res := map[string]any{"type": "typed", "id": msg.ID, "count": n, "skipped": skipped}
 			if err != nil {
 				res["error"] = err.Error()
 			}
@@ -118,7 +121,8 @@ func (s *Server) reply(client *wsClient, v any) {
 		return
 	}
 	select {
-	case client.out <- outMessage{typ: websocket.MessageText, data: data}:
+	case client.ctrl <- outMessage{typ: websocket.MessageText, data: data}:
 	default:
+		log.Printf("[Input] Dropping a reply to a browser that is not reading")
 	}
 }

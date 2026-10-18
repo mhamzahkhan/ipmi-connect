@@ -70,3 +70,15 @@ func httptestRequest(srv *Server, method, path, body string) *http.Request {
 	r.Header.Set("Content-Type", "application/json")
 	return authed(srv, r)
 }
+
+func TestRepeatedPowerActionsShareOneFollower(t *testing.T) {
+	pc := &powerConsole{state: "OFF"}
+	srv, _ := mediaServer(t, pc)
+	srv.powerFollowEvery, srv.powerFollowFor = 10*time.Millisecond, 100*time.Millisecond
+	if !srv.startFollowPower() {
+		t.Fatal("first follower did not start")
+	}
+	if srv.startFollowPower() {
+		t.Error("a second follower started instead of extending the first")
+	}
+}

@@ -11,7 +11,7 @@ import (
 
 // maxClientMessage bounds browser-to-server messages: input events are tiny, a paste to type
 // is up to maxTypeRunes characters.
-const maxClientMessage = 4*maxTypeRunes + 1024
+const maxClientMessage = 6*maxTypeRunes + 1024 // JSON escapes a character as up to 6 bytes
 
 // handleWS streams video to one browser and forwards its input to the console. Accept rejects
 // cross-origin connections: only pages served by this server can open the socket.
@@ -47,6 +47,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	var input *inputState
 	if s.Console != nil {
 		input = newInputState(s.Console)
+		input.typing = &s.typing
 		defer input.releaseAll() // a closed tab must not leave keys or buttons held on the host
 		// Ask the BMC for a complete frame even when a picture exists: reloading the page is how
 		// a user recovers one damaged by a lost or corrupt frame.

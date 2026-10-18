@@ -2,6 +2,7 @@
 import { toast } from '/toast.js';
 
 const MAX_CHARS = 16384;
+const MAX_MESSAGE_BYTES = 6 * MAX_CHARS + 1024; // the server's WebSocket message limit
 
 export function setupPaste(sendMessage) {
   const modal = document.getElementById('pasteModal');
@@ -10,6 +11,7 @@ export function setupPaste(sendMessage) {
   const typeBtn = document.getElementById('btnPasteType');
   const cancelBtn = document.getElementById('btnPasteCancel');
   let typing = false;
+  let currentId = ''; // the paste in flight: replies for any other id are ignored
 
   function setTyping(on) {
     typing = on;
@@ -19,12 +21,18 @@ export function setupPaste(sendMessage) {
   }
 
   function start(value) {
-    if (!value) return;
+    if (!value || typing) return;
     if ([...value].length > MAX_CHARS) {
       toast(`That is more than ${MAX_CHARS} characters`, 'error');
       return;
     }
-    if (!sendMessage({ type: 'type', text: value })) {
+    currentId = Math.random().toString(36).slice(2);
+    const msg = { type: 'type', id: currentId, text: value };
+    if (new TextEncoder().encode(JSON.stringify(msg)).length > MAX_MESSAGE_BYTES) {
+      toast('That text is too large to send in one paste', 'error');
+      return;
+    }
+    if (!sendMessage(msg)) {
       toast('Not connected to the console', 'error');
       return;
     }
@@ -62,8 +70,9 @@ export function setupPaste(sendMessage) {
         toast('The browser blocked clipboard access: use the Paste button instead', 'error');
       }
     },
-    // onResult handles the server's {"type":"typed"} reply.
+    // onResult handles the server's {"type":"typed"} reply for the paste in flight.
     onResult(msg) {
+      if (!typing || msg.id !== currentId) return;
       setTyping(false);
       if (msg.error) {
         toast(`Typing stopped after ${msg.count || 0} characters: ${msg.error}`, 'error', 6000);
@@ -73,6 +82,12 @@ export function setupPaste(sendMessage) {
       text.value = '';
       if (msg.skipped) toast(`Typed ${msg.count} characters; skipped ones a US keyboard cannot type: ${msg.skipped}`, 'error', 8000);
       else toast(`Typed ${msg.count} characters`, 'success');
+    },
+    // reset abandons a paste when the connection drops: the server has stopped typing it.
+    reset() {
+      if (!typing) return;
+      setTyping(false);
+      toast('Connection lost: typing stopped', 'error');
     },
   };
 }

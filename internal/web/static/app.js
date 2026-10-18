@@ -135,8 +135,8 @@ import { setupView } from '/view.js';
     }
   }
 
-  // Power state: a pill in the header, and buttons that make no sense in that state are disabled.
-  const POWER_ONLY_WHEN_ON = ['btnPowerSoft', 'btnPowerOff', 'btnPowerReset', 'btnPowerCycle'];
+  // Power state: a pill in the header. Only Power On (while on) and Shut Down (while off) are
+  // disabled: the reading can be up to 15 s old, so the hard actions always stay available.
   function showPower(state) {
     const pill = document.getElementById('powerPill');
     const on = state === 'ON';
@@ -145,16 +145,20 @@ import { setupView } from '/view.js';
     pill.classList.toggle('on', on);
     pill.classList.toggle('off', off);
     document.getElementById('btnPowerOn').disabled = on;
-    for (const id of POWER_ONLY_WHEN_ON) document.getElementById(id).disabled = off;
+    document.getElementById('btnPowerSoft').disabled = off;
   }
 
   // After a power action the server re-reads the state every second for 30 s; follow it.
   let fastStatusUntil = 0;
+  let following = false;
   function followPower() {
-    fastStatusUntil = Date.now() + 30000;
+    fastStatusUntil = Date.now() + 30000; // repeated actions extend the one running loop
+    if (following) return;
+    following = true;
     const tick = () => {
       pollStatus();
       if (Date.now() < fastStatusUntil) setTimeout(tick, 1000);
+      else following = false;
     };
     setTimeout(tick, 1000);
   }
@@ -178,6 +182,7 @@ import { setupView } from '/view.js';
     };
 
     ws.onclose = () => {
+      if (paste) paste.reset();
       if (signedOut) return;
       isConnected = false;
       statusDot.className = 'status-dot';
@@ -307,6 +312,7 @@ import { setupView } from '/view.js';
       // Ctrl/Cmd+Shift+V types the clipboard on the host instead of sending the chord.
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyV') {
         e.preventDefault();
+        if (e.repeat) return;
         releaseAll();
         paste.fromClipboard();
         return;

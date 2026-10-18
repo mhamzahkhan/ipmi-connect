@@ -49,7 +49,7 @@ func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.followPower()
+	s.startFollowPower()
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "action": string(req.Action)})
 }
 
@@ -58,28 +58,50 @@ const (
 	powerFollowDuration = 30 * time.Second
 )
 
-// followPower re-reads the power state every second for a while after a power action, so the
-// UI reflects it within a second or two instead of at the next slow poll.
-func (s *Server) followPower() {
+// startFollowPower re-reads the power state every second for a while after a power action, so
+// the UI reflects it within a second or two instead of at the next slow poll. Repeated actions
+// extend the one running follower rather than starting more; it reports whether it started one.
+func (s *Server) startFollowPower() bool {
 	reader, ok := s.Console.(bmc.PowerReader)
 	if !ok {
-		return
+		return false
 	}
+	s.followMu.Lock()
+	defer s.followMu.Unlock()
+	s.followUntil = time.Now().Add(s.powerFollowFor)
+	if s.following {
+		return false
+	}
+	s.following = true
+	go s.followPower(reader)
+	return true
+}
+
+func (s *Server) followPower(reader bmc.PowerReader) {
 	t := time.NewTicker(s.powerFollowEvery)
 	defer t.Stop()
-	stop := time.After(s.powerFollowFor)
 	for {
-		select {
-		case <-stop:
+		s.followMu.Lock()
+		if time.Now().After(s.followUntil) {
+			s.following = false
+			s.followMu.Unlock()
 			return
+		}
+		s.followMu.Unlock()
+		select {
 		case <-s.connCtx.Done():
+			s.followMu.Lock()
+			s.following = false
+			s.followMu.Unlock()
 			return
 		case <-t.C:
-			if state, err := reader.PowerState(); err == nil {
-				s.StateMu.Lock()
-				s.State.PowerState = state
-				s.StateMu.Unlock()
+			state, err := reader.PowerState()
+			if err != nil {
+				state = bmc.PowerStateUnknown
 			}
+			s.StateMu.Lock()
+			s.State.PowerState = state
+			s.StateMu.Unlock()
 		}
 	}
 }
