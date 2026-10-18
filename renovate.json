@@ -1,0 +1,124 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    ":pinDigestsDisabled",
+    ":prHourlyLimitNone",
+    "replacements:all",
+    "security:openssf-scorecard",
+    "mergeConfidence:all-badges",
+    ":gomod"
+  ],
+  "labels": [
+    "renovate",
+    "{{updateType}}"
+  ],
+  "semanticCommits": "enabled",
+  "automergeStrategy": "squash",
+  "automergeType": "pr",
+  "platformAutomerge": true,
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": [
+      "security"
+    ]
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "description": "Digest updates run nightly and are automerged",
+      "matchUpdateTypes": [
+        "digest"
+      ],
+      "automerge": true,
+      "automergeType": "branch",
+      "ignoreTests": true,
+      "schedule": [
+        "after 11pm",
+        "before 1am"
+      ]
+    },
+    {
+      "description": "Patch updates are automerged weekly",
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "automerge": true,
+      "automergeType": "branch",
+      "ignoreTests": true,
+      "schedule": [
+        "after 11pm on sunday"
+      ]
+    },
+    {
+      "description": "Minor updates run weekly",
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "schedule": [
+        "after 11pm on sunday"
+      ]
+    },
+    {
+      "description": "Major updates run monthly",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "schedule": [
+        "on the first day of the month"
+      ]
+    },
+    {
+      "description": "Security updates run at any time",
+      "matchCategories": [
+        "security"
+      ],
+      "schedule": [
+        "at any time"
+      ]
+    },
+    {
+      "description": "Tag Go module dependencies with go and golang labels",
+      "matchManagers": [
+        "gomod"
+      ],
+      "addLabels": [
+        "go",
+        "golang"
+      ]
+    },
+    {
+      "description": "Never auto-bump the go.mod 'go' directive",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "GitHub Actions workflow dependency updates",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "addLabels": [
+        "ci",
+        "github-actions"
+      ]
+    }
+  ],
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
+  "timezone": "Europe/London",
+  "minimumReleaseAge": "3 days",
+  "dependencyDashboard": true,
+  "assignees": [
+    "mhamzahkhan"
+  ]
+}
