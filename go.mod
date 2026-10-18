@@ -5,6 +5,7 @@ go 1.27.1
 require (
 	github.com/coder/websocket v1.8.12
 	github.com/diskfs/go-diskfs v1.9.4
+	golang.org/x/term v0.47.0
 )
 
 require (
@@ -17,5 +18,5 @@ require (
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )
