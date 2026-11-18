@@ -234,6 +234,13 @@ func (s *Session) handleUpdate(u FramebufferUpdate, sink Sink) {
 		}
 		s.noSignal = false
 		if s.frame == nil || s.frame.w != int(r.W) || s.frame.h != int(r.H) {
+			// A picture is allocated only for a rect that can be drawn, and at most once per
+			// update: otherwise one small message listing many empty rects of alternating sizes
+			// would force thousands of multi-megabyte allocations.
+			hermon := r.Encoding == 0x59 || r.Encoding == 0x00
+			if resized || !hermon || len(r.Data) == 0 {
+				continue
+			}
 			s.frame = newFrame(int(r.W), int(r.H))
 			resized = true
 			log.Printf("[Supermicro] Host video mode is %dx%d", r.W, r.H)
@@ -257,6 +264,8 @@ func (s *Session) handleUpdate(u FramebufferUpdate, sink Sink) {
 	if s.frame != nil {
 		// After a mode change the new picture starts black: ask for all of it, not just changes.
 		s.enqueue(framebufferUpdateRequest(!resized, uint16(s.frame.w), uint16(s.frame.h)))
+	} else {
+		s.enqueue(framebufferUpdateRequest(false, initW, initH)) // nothing drawable yet
 	}
 }
 
