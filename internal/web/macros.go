@@ -57,7 +57,7 @@ func executeMacro(console bmc.Console, name string) {
 		log.Printf("[Server] Unknown macro %q, ignoring", name)
 		return
 	}
-	log.Printf("[Server] Executing macro key sequence: %s", name)
+	log.Printf("[Server] Executing macro key sequence: %q", name)
 	send := func(down bool, key uint32) error { return console.SendKeyEvent(down, uint16(key)) }
 	if err := playMacro(m, send, time.Sleep); err != nil {
 		log.Printf("[Server] Macro %q: %v", name, err)
