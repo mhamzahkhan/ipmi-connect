@@ -116,6 +116,19 @@ func TestParseVideoFrame(t *testing.T) {
 		{name: "mode 2 is a cursor bitmap, not video", payload: frame(2, 1, 1, 32, 32, 0, 0, 0xCC), want: nil},
 		{name: "mode 3 is a cursor bitmap, not video", payload: frame(3, 1, 1, 32, 32, 0, 0, 0xCC), want: nil},
 		{name: "truncated header is ignored", payload: []byte{5, 0, 0}, want: nil},
+		{name: "first chunk of a 65535x65535 frame is dropped", payload: frame(5, 0, 0, 0xFFFF, 0xFFFF, 1, 0, 0xAA), want: nil},
+		{name: "first chunk too wide is dropped", payload: frame(4, 0, 0, 768, maxVideoSide+1, 1, 0, 0xAA), want: nil},
+		{name: "first chunk too tall is dropped", payload: frame(4, 0, 0, maxVideoSide+1, 1024, 1, 0, 0xAA), want: nil},
+		{
+			name:    "largest plausible first chunk is kept",
+			payload: frame(4, 0, 0, maxVideoSide, maxVideoSide, 1, 0, 0xAA),
+			want:    &VideoPacket{Width: maxVideoSide, Height: maxVideoSide, Flags: 1, Bitstream: []byte{0xAA}},
+		},
+		{
+			name:    "continuation chunk geometry is not used, so not checked",
+			payload: frame(4, 0, 0, 0xFFFF, 0xFFFF, 0, 0, 0xAA),
+			want:    &VideoPacket{Width: 0xFFFF, Height: 0xFFFF, Bitstream: []byte{0xAA}},
+		},
 	}
 
 	for _, tt := range tests {
