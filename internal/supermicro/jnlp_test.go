@@ -2,6 +2,7 @@ package supermicro
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +46,10 @@ func TestParseTicket(t *testing.T) {
 		{"no port defaults to 5900", jnlp("192.0.2.20", "t", "t"), "t", 5900, false, false},
 		{"not a JNLP", "<html>login</html>", "", 0, false, true},
 		{"too few arguments", jnlp("192.0.2.20", "t"), "", 0, false, true},
+		{"long token is kept for credentials to cap", jnlp("192.0.2.20", strings.Repeat("u", 40), "p"), strings.Repeat("u", 40), 5900, false, false},
+		{"absurd user token", jnlp("192.0.2.20", strings.Repeat("u", maxTicketToken+1), "p"), "", 0, false, true},
+		{"absurd password token", jnlp("192.0.2.20", "u", strings.Repeat("p", 1<<20)), "", 0, false, true},
+		{"non-numeric port keeps the default", jnlp("192.0.2.20", "t", "t", "null", "99999999999999999999"), "t", 5900, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
