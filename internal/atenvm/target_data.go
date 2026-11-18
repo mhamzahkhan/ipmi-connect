@@ -70,7 +70,7 @@ func (t *scsiTarget) modeSense(cdb []byte, dataLen uint32, long bool) ([]byte, b
 	}
 	var hdr, out []byte
 	if long {
-		if len(cdb) < 8 {
+		if len(cdb) < 9 { // allocation length in bytes 7-8
 			return t.fail(senseIllegalRequest, ascInvalidField, 0)
 		}
 		body := page2A
@@ -160,7 +160,7 @@ func (t *scsiTarget) readTOC(cdb []byte, dataLen uint32) ([]byte, bool) {
 	// The format field moved between MMC revisions: modern hosts use byte 2 (bits 0-3), legacy
 	// ATAPI hosts (including the captured one) use byte 9 (bits 6-7). Accept either.
 	format := cdb[2] & 0x0F
-	if format == 0 {
+	if format == 0 && len(cdb) >= 10 { // the BMC passes the host's CDB length through unchecked
 		format = cdb[9] >> 6
 	}
 	leadOut := t.drive.Blocks

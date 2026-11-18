@@ -148,6 +148,47 @@ func TestShortCDBDoesNotPanic(t *testing.T) {
 	}
 }
 
+// The CDB length comes from the BMC's CBW, so every truncation of a valid CDB must be handled
+// (READ TOC once read byte 9 of a 9-byte CDB, MODE SENSE(10) byte 8 of an 8-byte one).
+func TestEveryCDBTruncationIsSafe(t *testing.T) {
+	cdbs := [][]byte{
+		{CmdReadTOC, 0x02, 0, 0, 0, 0, 0, 0, 0x0c, 0x40},
+		{CmdModeSense10, 0, 0x3f, 0, 0, 0, 0, 0, 0xff, 0},
+		{CmdModeSense6, 0, 0x3f, 0, 0xff, 0},
+		{CmdInquiry, 0, 0, 0, 36, 0},
+		{CmdRead10, 0, 0, 0, 0, 0, 0, 0, 1, 0},
+		{CmdRead12, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0},
+		{CmdGetConfiguration, 0, 0, 0, 0, 0, 0, 0, 0x98, 0},
+		{CmdGetEventStatusNotification, 1, 0, 0, 0x10, 0, 0, 0, 8, 0},
+		{CmdReadDiscInformation, 0, 0, 0, 0, 0, 0, 0, 0x22, 0},
+		{CmdReadTrackInformation, 1, 0, 0, 0, 1, 0, 0, 0x1c, 0},
+		{CmdMechanismStatus, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0},
+		{CmdRequestSense, 0, 0, 0, 18, 0},
+		{CmdReadCapacity10, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+	}
+	for _, cd := range []bool{true, false} {
+		img := &memImage{data: make([]byte, 4*SectorSizeCD)}
+		tgt := isoTarget(t, img, int64(len(img.data)))
+		if !cd {
+			tgt = diskTarget(t, img, int64(len(img.data)), false)
+		}
+		for _, full := range cdbs {
+			for n := 0; n <= len(full); n++ {
+				if data, _ := tgt.Execute(full[:n], 0xff); len(data) > 0xff {
+					t.Errorf("cd=%v % x: %d bytes for a 255-byte transfer", cd, full[:n], len(data))
+				}
+				_ = tgt.WriteData(full[:n], make([]byte, SectorSizeDisk))
+			}
+		}
+	}
+
+	// A 9-byte READ TOC (no byte 9) still reads the format from byte 2, and defaults to the TOC.
+	tgt := isoTarget(t, &memImage{data: make([]byte, 4*SectorSizeCD)}, 4*SectorSizeCD)
+	if data, ok := tgt.Execute([]byte{CmdReadTOC, 0, 0, 0, 0, 0, 0, 0, 0x14}, 0x14); !ok || len(data) != 20 {
+		t.Errorf("9-byte READ TOC: ok=%v, %d bytes, want the 20-byte TOC", ok, len(data))
+	}
+}
+
 func TestUnsupportedOpcodeSetsSense(t *testing.T) {
 	img := &memImage{data: make([]byte, 2*SectorSizeCD)}
 	tgt := isoTarget(t, img, int64(len(img.data)))
