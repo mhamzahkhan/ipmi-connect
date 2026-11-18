@@ -107,6 +107,36 @@ func TestISONoDataWhenDataLenZero(t *testing.T) {
 	}
 }
 
+// Execute returns a READ as one buffer, so an in-range read with a huge transfer length must be
+// refused rather than allocated (the session streams reads instead).
+func TestBufferedReadIsBounded(t *testing.T) {
+	const sectors = 2 * maxBufferedRead / SectorSizeCD
+	img := &memImage{data: make([]byte, sectors*SectorSizeCD)}
+	tgt := isoTarget(t, img, int64(len(img.data)))
+	tests := []struct {
+		name    string
+		blocks  uint32
+		dataLen uint32
+		want    byte
+	}{
+		{"at the bound", maxBufferedRead / SectorSizeCD, maxBufferedRead, CSWStatusGood},
+		{"whole image", sectors, 0xFFFFFFFF, CSWStatusCommandFail},
+		{"bounded by the transfer length", sectors, maxBufferedRead, CSWStatusGood},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := tt.blocks
+			data, st := exec(tgt, tt.dataLen, CmdRead12, 0, 0, 0, 0, 0, byte(b>>24), byte(b>>16), byte(b>>8), byte(b))
+			if st != tt.want {
+				t.Fatalf("status %#x, want %#x", st, tt.want)
+			}
+			if st == CSWStatusGood && len(data) > maxBufferedRead {
+				t.Errorf("returned %d bytes", len(data))
+			}
+		})
+	}
+}
+
 func TestShortCDBDoesNotPanic(t *testing.T) {
 	img := &memImage{data: make([]byte, 2*SectorSizeCD)}
 	tgt := isoTarget(t, img, int64(len(img.data)))

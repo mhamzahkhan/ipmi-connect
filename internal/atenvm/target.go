@@ -12,6 +12,11 @@ const (
 	SectorSizeDisk = vmedia.BlockSizeDisk
 )
 
+// maxBufferedRead bounds a READ that Execute returns as one buffer. The session streams reads
+// instead, so only a direct caller of Execute meets it; it keeps a host's 4 GiB transfer length
+// from sizing an allocation.
+const maxBufferedRead = 1 << 20
+
 // scsiTarget is the SCSI/MMC target for one emulated drive (a read-only CD-ROM, or a
 // floppy/removable disk that may be writable). It validates every command against the medium and
 // keeps sense for REQUEST SENSE, as the BMC's own target does.
@@ -47,6 +52,9 @@ func (t *scsiTarget) Execute(cdb []byte, dataLen uint32) ([]byte, bool) {
 		off, n, ok := t.readRange(cdb, dataLen)
 		if !ok {
 			return nil, false
+		}
+		if n > maxBufferedRead {
+			return t.fail(senseIllegalRequest, ascInvalidField, 0)
 		}
 		buf := make([]byte, n) // the session streams reads; this whole-buffer path serves tests
 		if _, err := t.drive.ReadAt(buf, off); err != nil {
