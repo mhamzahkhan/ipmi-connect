@@ -13,6 +13,13 @@ const maxCursorSide = 256
 // maxRectData bounds one rectangle's payload (a 1920x1200 frame at 2 bytes per pixel is 4.6 MB).
 const maxRectData = 64 << 20
 
+// maxUpdateData bounds all rectangles of one update together, so a rect count of 65535 cannot
+// multiply maxRectData.
+const maxUpdateData = maxRectData
+
+// maxRectPrealloc bounds the rects allocated before any arrive; the BMC sends one or a few.
+const maxRectPrealloc = 16
+
 // Server-to-client messages.
 type (
 	FramebufferUpdate struct{ Rects []Rect }
@@ -100,7 +107,8 @@ func readFramebufferUpdate(r *bufio.Reader) (FramebufferUpdate, error) {
 		return FramebufferUpdate{}, err
 	}
 	n := int(binary.BigEndian.Uint16(hdr[1:3]))
-	u := FramebufferUpdate{Rects: make([]Rect, 0, n)}
+	u := FramebufferUpdate{Rects: make([]Rect, 0, min(n, maxRectPrealloc))}
+	total := 0
 	for i := 0; i < n; i++ {
 		b, err := readBytes(r, 20) // x, y, w, h u16; encoding s32; frame mode u32; data length u32
 		if err != nil {
@@ -109,6 +117,9 @@ func readFramebufferUpdate(r *bufio.Reader) (FramebufferUpdate, error) {
 		length := binary.BigEndian.Uint32(b[16:20])
 		if length > maxRectData {
 			return FramebufferUpdate{}, fmt.Errorf("rect data length %d is not plausible", length)
+		}
+		if total += int(length); total > maxUpdateData {
+			return FramebufferUpdate{}, fmt.Errorf("framebuffer update of more than %d bytes is not plausible", maxUpdateData)
 		}
 		data, err := readBytes(r, int(length))
 		if err != nil {
