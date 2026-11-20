@@ -289,3 +289,13 @@ func TestUpdateResizesAtMostOncePerMessage(t *testing.T) {
 		t.Fatalf("frame = %+v, want the single 640x480 resize", s.frame)
 	}
 }
+
+// On a shared NIC the X7SB3 drops off the network for about 12 s while the host reboots, and
+// giving up on the session then leaves a stale session holding keyboard and mouse, so the
+// silence limit must comfortably outlast that.
+func TestSessionOutlastsAHostRebootOutage(t *testing.T) {
+	const observedOutage = 12 * time.Second
+	if idleDead < 3*observedOutage {
+		t.Errorf("idleDead = %v, want at least %v", idleDead, 3*observedOutage)
+	}
+}

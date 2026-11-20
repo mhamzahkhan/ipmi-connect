@@ -28,7 +28,7 @@ const (
 const (
 	keepAliveInterval = 3 * time.Second  // the vendor client's keep-alive period
 	idlePoke          = 5 * time.Second  // ask for a full frame after this much silence
-	idleDead          = 15 * time.Second // reconnect after this much silence
+	idleDead          = 45 * time.Second // reconnect after this much silence; outlasts a host-reboot outage
 	noSignalPoll      = time.Second
 	writeTimeout      = 5 * time.Second
 	sendQueueLen      = 64
@@ -135,7 +135,7 @@ func (s *Session) Run(ctx context.Context, sink Sink) error {
 			idle := time.Since(lastMsg)
 			switch {
 			case idle > idleDead:
-				return errors.New("BMC silent for 15s")
+				return fmt.Errorf("BMC silent for %v", idleDead)
 			case s.noSignal:
 				s.enqueue(framebufferUpdateRequest(false, initW, initH))
 			case idle > idlePoke && !poked:
@@ -203,7 +203,7 @@ func (s *Session) handle(msg any, sink Sink) {
 			s.powerOn.Store(map[bool]int32{false: 0, true: 1}[m.PowerOn])
 		}
 	case Privilege:
-		log.Printf("[Supermicro] Session notice: %q", m.Text)
+		log.Printf("[Supermicro] Session notice %d/%d: %q", m.A, m.B, m.Text)
 		if m.A == 1 && m.B == 4 {
 			s.viewOnly.Store(true)
 			s.setStatus(sink, statusViewOnly)
