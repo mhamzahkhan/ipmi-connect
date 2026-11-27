@@ -22,7 +22,20 @@ const (
 	reconnectMax      = 30 * time.Second
 	stableSession     = 30 * time.Second // a session this long resets the backoff
 	logoutWaitTimeout = 5 * time.Second
+
+	// After a session that had keyboard and mouse control is lost (say the BMC dropped off the
+	// network while the host rebooted on a shared NIC), the X7SB3 keeps it as the owner for a
+	// while and makes the reconnect view only. Reconnect this often, for this long, to get
+	// control back; after that a view-only session is accepted (it may be a real user).
+	reclaimDelay  = 3 * time.Second
+	reclaimWindow = 2 * time.Minute
 )
+
+// statusReclaiming is shown while waiting for the BMC to drop a lost session's control.
+const statusReclaiming = "Waiting for the BMC to release keyboard and mouse from the previous connection…"
+
+// errReclaim ends a view-only connection made while reclaiming control.
+var errReclaim = errors.New("view only: the lost session still holds keyboard and mouse")
 
 // inBandPower maps power actions to the KVM socket's 0x1a codes. Power cycle has none; it goes
 // through the web CGI.
@@ -37,6 +50,9 @@ type Client struct {
 	web  *WebSession
 	dial func(ctx context.Context, addr string) (net.Conn, error)
 
+	// Retry timing; fields so tests can shorten them.
+	retryMin, reclaimDelay, reclaimWindow time.Duration
+
 	mu      sync.Mutex
 	session *Session
 	running bool
@@ -49,9 +65,10 @@ type Client struct {
 // NewClient prepares a client; call Login, then Run.
 func NewClient(host, user, password string) *Client {
 	c := &Client{
-		host:    host,
-		web:     NewWebSession(host, user, password),
-		stopped: make(chan struct{}),
+		host:     host,
+		web:      NewWebSession(host, user, password),
+		stopped:  make(chan struct{}),
+		retryMin: reconnectMin, reclaimDelay: reclaimDelay, reclaimWindow: reclaimWindow,
 		dial: func(ctx context.Context, addr string) (net.Conn, error) {
 			d := net.Dialer{Timeout: dialTimeout}
 			return d.DialContext(ctx, "tcp", addr)
@@ -84,62 +101,80 @@ func (c *Client) Run(ctx context.Context, sink Sink) {
 	c.markRunning()
 	defer close(c.stopped)
 
-	delay := reconnectMin
+	delay := c.retryMin
+	var reclaimUntil time.Time // while in the future, a view-only connection is retried
 	for {
 		started := time.Now()
-		err := c.serveOnce(ctx, sink)
+		hadControl, err := c.serveOnce(ctx, sink, time.Now().Before(reclaimUntil))
 		if ctx.Err() != nil {
 			return
 		}
-		if time.Since(started) > stableSession {
-			delay = reconnectMin
+		var wait time.Duration
+		if errors.Is(err, errReclaim) {
+			log.Printf("[Supermicro] %v; retrying in %v", err, c.reclaimDelay)
+			sink.SetStatus(statusReclaiming)
+			wait = c.reclaimDelay
+		} else {
+			if hadControl {
+				reclaimUntil = time.Now().Add(c.reclaimWindow)
+			}
+			if time.Since(started) > stableSession {
+				delay = c.retryMin
+			}
+			log.Printf("[Supermicro] KVM session ended (%v); reconnecting in %v", err, delay)
+			sink.SetStatus("Reconnecting to the KVM…")
+			wait, delay = delay, nextDelay(delay)
 		}
-		log.Printf("[Supermicro] KVM session ended (%v); reconnecting in %v", err, delay)
-		sink.SetStatus("Reconnecting to the KVM…")
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(delay):
+		case <-time.After(wait):
 		}
-		delay = nextDelay(delay)
 	}
 }
 
-// serveOnce fetches a ticket, connects, authenticates and serves one session.
-func (c *Client) serveOnce(ctx context.Context, sink Sink) error {
+// serveOnce fetches a ticket, connects, authenticates and serves one session. hadControl
+// reports whether the session still had keyboard and mouse control when it ended. With
+// reclaim, a view-only connection is closed at once with errReclaim.
+func (c *Client) serveOnce(ctx context.Context, sink Sink, reclaim bool) (hadControl bool, err error) {
 	ticket, err := c.web.FetchTicket(c.host)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err() // shutting down: never open a new web session
+			return false, ctx.Err() // shutting down: never open a new web session
 		}
 		// The web session may have expired: log in again once.
 		if lerr := c.web.Login(); lerr != nil {
-			return fmt.Errorf("re-login: %w", lerr)
+			return false, fmt.Errorf("re-login: %w", lerr)
 		}
 		if ticket, err = c.web.FetchTicket(c.host); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if ticket.TLS {
-		return errors.New(`the BMC has "KVM SSL" enabled, which is not supported; disable it in the BMC web UI`)
+		return false, errors.New(`the BMC has "KVM SSL" enabled, which is not supported; disable it in the BMC web UI`)
 	}
 
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return false, ctx.Err()
 	}
 	conn, err := c.dial(ctx, net.JoinHostPort(c.host, strconv.Itoa(ticket.Port)))
 	if err != nil {
-		return fmt.Errorf("KVM port %d: %w", ticket.Port, err)
+		return false, fmt.Errorf("KVM port %d: %w", ticket.Port, err)
 	}
 	_ = conn.SetDeadline(time.Now().Add(handshakeTimeout))
 	r := bufio.NewReader(conn)
 	info, err := handshake(r, conn, ticket)
 	if err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("KVM handshake: %w", err)
+		return false, fmt.Errorf("KVM handshake: %w", err)
+	}
+	if reclaim && !info.KeyboardMouse {
+		_ = conn.Close()
+		return false, errReclaim
 	}
 	_ = conn.SetDeadline(time.Time{})
-	log.Printf("[Supermicro] KVM connected to %q (video %v, keyboard/mouse %v)", info.Name, info.Video, info.KeyboardMouse)
+	log.Printf("[Supermicro] KVM connected to %q (session %d, video %v, keyboard/mouse %v)",
+		info.Name, info.SessionID, info.Video, info.KeyboardMouse)
 	sink.SetStatus("")
 
 	s := newSession(conn, r, info)
@@ -150,8 +185,9 @@ func (c *Client) serveOnce(ctx context.Context, sink Sink) error {
 		c.mu.Lock()
 		c.session = nil
 		c.mu.Unlock()
+		hadControl = !s.viewOnly.Load()
 	}()
-	return s.Run(ctx, sink)
+	return false, s.Run(ctx, sink)
 }
 
 // Logout ends the web session once the KVM socket has closed (a web logout would kick it).

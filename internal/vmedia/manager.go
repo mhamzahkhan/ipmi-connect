@@ -204,7 +204,7 @@ func (m *Manager) attach(ctx context.Context, mp *mapping, im *image, target bmc
 	mp.disk, mp.file, mp.mounting = disk, f, false
 	m.lastErr = ""
 	m.mu.Unlock()
-	log.Printf("[VMedia] %s mapped to the %s drive", im.name, target)
+	log.Printf("[VMedia] %q mapped to the %s drive", im.name, target)
 	return nil
 }
 

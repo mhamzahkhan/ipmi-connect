@@ -364,3 +364,32 @@ func TestCloseReleasesEverything(t *testing.T) {
 		t.Error("mapped after Close")
 	}
 }
+
+func TestReplacedImageIsNotServed(t *testing.T) {
+	for _, how := range []string{"rename", "symlink"} {
+		t.Run(how, func(t *testing.T) {
+			m, _ := newManager(t)
+			path := writeFile(t, "swap.img", 4096)
+			img, err := m.AddImage(path, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			other := writeFile(t, "other.img", 4096)
+			_ = os.Remove(path)
+			if how == "rename" {
+				if err := os.Rename(other, path); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Symlink(other, path); err != nil {
+				t.Fatal(err)
+			}
+			err = m.MapImage(img.ID, bmc.TargetRemovable)
+			if err == nil {
+				t.Fatal("a replaced image file was mapped")
+			}
+			if how == "rename" && !errors.Is(err, vmedia.ErrImageReplaced) {
+				t.Errorf("err = %v, want ErrImageReplaced", err)
+			}
+		})
+	}
+}

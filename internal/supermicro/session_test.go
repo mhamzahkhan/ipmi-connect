@@ -273,3 +273,29 @@ func TestSessionEndsOnProtocolError(t *testing.T) {
 		t.Fatal("session did not end on an unknown message")
 	}
 }
+
+// A hostile update listing many rects of alternating sizes must not allocate a picture for each.
+func TestUpdateResizesAtMostOncePerMessage(t *testing.T) {
+	s := newSession(nil, nil, ServerInfo{Video: true, KeyboardMouse: true})
+	sink := &recordingSink{}
+	var rects []Rect
+	for i := 0; i < 1000; i++ {
+		w := uint16(4000 + i%2)
+		rects = append(rects, Rect{W: w, H: 4000, Encoding: 0x59}) // no data
+	}
+	rects = append(rects, Rect{W: 640, H: 480, Encoding: 0x59, Data: []byte{0}}, Rect{W: 800, H: 600, Encoding: 0x59, Data: []byte{0}})
+	s.handleUpdate(FramebufferUpdate{Rects: rects}, sink)
+	if s.frame == nil || s.frame.w != 640 || s.frame.h != 480 {
+		t.Fatalf("frame = %+v, want the single 640x480 resize", s.frame)
+	}
+}
+
+// On a shared NIC the X7SB3 drops off the network for about 12 s while the host reboots, and
+// giving up on the session then leaves a stale session holding keyboard and mouse, so the
+// silence limit must comfortably outlast that.
+func TestSessionOutlastsAHostRebootOutage(t *testing.T) {
+	const observedOutage = 12 * time.Second
+	if idleDead < 3*observedOutage {
+		t.Errorf("idleDead = %v, want at least %v", idleDead, 3*observedOutage)
+	}
+}

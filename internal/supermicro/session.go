@@ -28,7 +28,7 @@ const (
 const (
 	keepAliveInterval = 3 * time.Second  // the vendor client's keep-alive period
 	idlePoke          = 5 * time.Second  // ask for a full frame after this much silence
-	idleDead          = 15 * time.Second // reconnect after this much silence
+	idleDead          = 45 * time.Second // reconnect after this much silence; outlasts a host-reboot outage
 	noSignalPoll      = time.Second
 	writeTimeout      = 5 * time.Second
 	sendQueueLen      = 64
@@ -135,7 +135,7 @@ func (s *Session) Run(ctx context.Context, sink Sink) error {
 			idle := time.Since(lastMsg)
 			switch {
 			case idle > idleDead:
-				return errors.New("BMC silent for 15s")
+				return fmt.Errorf("BMC silent for %v", idleDead)
 			case s.noSignal:
 				s.enqueue(framebufferUpdateRequest(false, initW, initH))
 			case idle > idlePoke && !poked:
@@ -203,7 +203,7 @@ func (s *Session) handle(msg any, sink Sink) {
 			s.powerOn.Store(map[bool]int32{false: 0, true: 1}[m.PowerOn])
 		}
 	case Privilege:
-		log.Printf("[Supermicro] Session notice: %q", m.Text)
+		log.Printf("[Supermicro] Session notice %d/%d: %q", m.A, m.B, m.Text)
 		if m.A == 1 && m.B == 4 {
 			s.viewOnly.Store(true)
 			s.setStatus(sink, statusViewOnly)
@@ -234,6 +234,13 @@ func (s *Session) handleUpdate(u FramebufferUpdate, sink Sink) {
 		}
 		s.noSignal = false
 		if s.frame == nil || s.frame.w != int(r.W) || s.frame.h != int(r.H) {
+			// A picture is allocated only for a rect that can be drawn, and at most once per
+			// update: otherwise one small message listing many empty rects of alternating sizes
+			// would force thousands of multi-megabyte allocations.
+			hermon := r.Encoding == 0x59 || r.Encoding == 0x00
+			if resized || !hermon || len(r.Data) == 0 {
+				continue
+			}
 			s.frame = newFrame(int(r.W), int(r.H))
 			resized = true
 			log.Printf("[Supermicro] Host video mode is %dx%d", r.W, r.H)
@@ -257,6 +264,8 @@ func (s *Session) handleUpdate(u FramebufferUpdate, sink Sink) {
 	if s.frame != nil {
 		// After a mode change the new picture starts black: ask for all of it, not just changes.
 		s.enqueue(framebufferUpdateRequest(!resized, uint16(s.frame.w), uint16(s.frame.h)))
+	} else {
+		s.enqueue(framebufferUpdateRequest(false, initW, initH)) // nothing drawable yet
 	}
 }
 

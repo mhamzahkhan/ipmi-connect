@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 )
 
 // HeaderLen is the fixed size of every ATEN Virtual Media message header.
@@ -95,14 +96,40 @@ func ReadFrame(r io.Reader) (Header, []byte, error) {
 		return Header{}, nil, fmt.Errorf("payload length %d exceeds maximum %d", h.PayloadLen, maxPayload)
 	}
 
-	payload := make([]byte, h.PayloadLen)
-	if h.PayloadLen > 0 {
-		if _, err := io.ReadFull(r, payload); err != nil {
-			return Header{}, nil, fmt.Errorf("reading payload: %w", err)
-		}
+	payload, err := readPayload(r, int(h.PayloadLen))
+	if err != nil {
+		return Header{}, nil, fmt.Errorf("reading payload: %w", err)
 	}
 
 	return h, payload, nil
+}
+
+// readChunk is how far readPayload allocates ahead of the data, so a large length the BMC claims
+// costs memory only as its bytes actually arrive.
+const readChunk = 64 << 10
+
+// readPayload reads exactly n bytes, with io.ReadFull's errors.
+func readPayload(r io.Reader, n int) ([]byte, error) {
+	if n <= readChunk {
+		b := make([]byte, n)
+		_, err := io.ReadFull(r, b)
+		return b, err
+	}
+	b := make([]byte, 0, readChunk)
+	for len(b) < n {
+		if len(b) == cap(b) {
+			b = slices.Grow(b, min(len(b), n-len(b))) // double, but not past n
+		}
+		m, err := io.ReadFull(r, b[len(b):min(cap(b), n)])
+		b = b[:len(b)+m]
+		if err != nil {
+			if err == io.EOF && len(b) > 0 {
+				err = io.ErrUnexpectedEOF
+			}
+			return b, err
+		}
+	}
+	return b, nil
 }
 
 // WriteFrame writes an 8-byte header and payload to w.

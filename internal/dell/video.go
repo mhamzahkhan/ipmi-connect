@@ -29,6 +29,10 @@ const (
 	videoModeCursorB = 3
 )
 
+// maxVideoSide rejects implausible frame geometry (ASPEED engines top out at 1920x1200) before
+// anything is sized from it.
+const maxVideoSide = 4096
+
 // ReadVideoPacket reads and decodes the next video packet from the Video Channel with a 3-second timeout.
 func (c *Client) ReadVideoPacket() (*VideoPacket, error) {
 	return c.ReadVideoPacketWithTimeout(packetBodyTimeout)
@@ -68,7 +72,8 @@ func (c *Client) ackVideoPacket() error {
 	return c.writeVideo(beefPacket(pktVideoAck, [8]byte{1}))
 }
 
-// parseVideoFrame decodes an ib payload, returning nil for cursor bitmaps and short payloads.
+// parseVideoFrame decodes an ib payload, returning nil for cursor bitmaps, short payloads and
+// first chunks of an implausible size. Only a first chunk's geometry describes the frame.
 func parseVideoFrame(p []byte) *VideoPacket {
 	if len(p) < videoFrameHeaderLen {
 		return nil
@@ -79,7 +84,7 @@ func parseVideoFrame(p []byte) *VideoPacket {
 	}
 
 	cursor := uint32(p[1])<<16 | uint32(p[2])<<8 | uint32(p[3])
-	return &VideoPacket{
+	pkt := &VideoPacket{
 		CursorX:        uint16(cursor >> 12 & 0xFFF),
 		CursorY:        uint16(cursor & 0xFFF),
 		Height:         binary.BigEndian.Uint16(p[4:6]),
@@ -90,4 +95,8 @@ func parseVideoFrame(p []byte) *VideoPacket {
 		ChromaSelector: p[11] & 0x0F,
 		Bitstream:      p[videoFrameHeaderLen:],
 	}
+	if pkt.Flags&1 != 0 && (pkt.Width > maxVideoSide || pkt.Height > maxVideoSide) {
+		return nil
+	}
+	return pkt
 }

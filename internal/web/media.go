@@ -48,7 +48,7 @@ func (s *Server) mediaRoutes(mux *http.ServeMux) {
 		if err := decode(r, &req); err != nil || req.ImageID == "" {
 			return badRequest(`send {"image_id": "..."}`)
 		}
-		log.Printf("[Server] Mapping image %s to the %s drive", req.ImageID, target)
+		log.Printf("[Server] Mapping image %q to the %s drive", req.ImageID, target)
 		return vm.MapImage(req.ImageID, target)
 	}))
 	mux.HandleFunc("DELETE /api/media/drives/{target}", s.media(func(vm bmc.VirtualMedia, r *http.Request) error {

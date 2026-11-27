@@ -54,7 +54,14 @@ func inspectImage(path string, readOnly bool) (*image, error) {
 	if kind != "iso" && kind != "img" {
 		return nil, errors.New("the image must be an .iso or .img file")
 	}
-	st, err := os.Stat(path)
+	// Open (without following a final symlink) and inspect the open file, so what is checked is
+	// what was opened; openFile later insists on the same file.
+	f, err := openNoFollow(path, os.O_RDONLY)
+	if err != nil {
+		return nil, fmt.Errorf("open image: %w", err)
+	}
+	st, err := f.Stat()
+	_ = f.Close()
 	if err != nil {
 		return nil, fmt.Errorf("open image: %w", err)
 	}
@@ -69,15 +76,25 @@ func inspectImage(path string, readOnly bool) (*image, error) {
 	}, nil
 }
 
-// openFile opens the image for serving: read-write only when the image is writable.
+// ErrImageReplaced means the path now names a different file than the one the user added.
+var ErrImageReplaced = errors.New("the image file was replaced since it was added; remove it and add it again")
+
+// openFile opens the image for serving: read-write only when the image is writable. It refuses
+// a path that has been swapped for another file (or a symlink) since the image was added, so a
+// replaced file is never served to the host, or written.
 func (im *image) openFile() (*os.File, error) {
 	flag := os.O_RDONLY
 	if !im.readOnly {
 		flag = os.O_RDWR
 	}
-	f, err := os.OpenFile(im.path, flag, 0)
+	f, err := openNoFollow(im.path, flag)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", im.name, err)
+	}
+	st, err := f.Stat()
+	if err != nil || !os.SameFile(st, im.info) || !st.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, ErrImageReplaced
 	}
 	return f, nil
 }

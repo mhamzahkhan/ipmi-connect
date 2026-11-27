@@ -2,6 +2,7 @@ package supermicro
 
 import (
 	"errors"
+	"fmt"
 	"html"
 	"regexp"
 	"strconv"
@@ -15,6 +16,10 @@ type Ticket struct {
 	Port           int
 	TLS            bool // "KVM SSL" firmware; not supported yet
 }
+
+// maxTicketToken rejects implausible KVM tokens. The BMC issues 16-character tokens and the
+// login carries at most 23 bytes of each (see credentials), so anything this long is not a ticket.
+const maxTicketToken = 256
 
 var argumentRE = regexp.MustCompile(`<argument>([^<]*)</argument>`)
 
@@ -38,6 +43,9 @@ func parseTicket(body, host string) (Ticket, error) {
 	}
 	if len(args) < i+3 {
 		return Ticket{}, errors.New("JNLP has no KVM credentials")
+	}
+	if len(args[i+1]) > maxTicketToken || len(args[i+2]) > maxTicketToken {
+		return Ticket{}, fmt.Errorf("JNLP KVM credentials longer than %d bytes are not plausible", maxTicketToken)
 	}
 	t := Ticket{User: args[i+1], Password: args[i+2], Port: 5900}
 	if len(args) > i+4 {

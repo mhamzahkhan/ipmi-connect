@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"slices"
 )
 
 const (
@@ -105,10 +106,32 @@ func handshake(r *bufio.Reader, w io.Writer, t Ticket) (ServerInfo, error) {
 	}, nil
 }
 
+// readChunk is how far readBytes allocates ahead of the data, so a large length the BMC claims
+// costs memory only as its bytes actually arrive.
+const readChunk = 64 << 10
+
+// readBytes reads exactly n bytes, with io.ReadFull's errors.
 func readBytes(r io.Reader, n int) ([]byte, error) {
-	b := make([]byte, n)
-	_, err := io.ReadFull(r, b)
-	return b, err
+	if n <= readChunk {
+		b := make([]byte, n)
+		_, err := io.ReadFull(r, b)
+		return b, err
+	}
+	b := make([]byte, 0, readChunk)
+	for len(b) < n {
+		if len(b) == cap(b) {
+			b = slices.Grow(b, min(len(b), n-len(b))) // double, but not past n
+		}
+		m, err := io.ReadFull(r, b[len(b):min(cap(b), n)])
+		b = b[:len(b)+m]
+		if err != nil {
+			if err == io.EOF && len(b) > 0 {
+				err = io.ErrUnexpectedEOF
+			}
+			return b, err
+		}
+	}
+	return b, nil
 }
 
 // readReason reads an RFB u32-length reason string, bounded.

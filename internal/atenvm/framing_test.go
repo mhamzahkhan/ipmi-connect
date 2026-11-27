@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"net"
+	"runtime"
 	"testing"
 
 	"github.com/mhamzahkhan/ipmi-connect/internal/atenvm"
@@ -119,6 +120,52 @@ func TestFrame31GoldenVector(t *testing.T) {
 	// In the capture it is 0x06 (SCSI subclass)
 	if decrypted[79] != 0x06 {
 		t.Errorf("byte 87 (offset 79) = 0x%02x, want 0x06", decrypted[79])
+	}
+}
+
+func TestReadFrameBoundsPayloads(t *testing.T) {
+	frame := func(n uint32, payload []byte) []byte {
+		return append(atenvm.Header{Endpoint: atenvm.EndpointBulkOut, PayloadLen: n}.Encode(), payload...)
+	}
+	big := bytes.Repeat([]byte{0x5a}, 300<<10) // larger than one read chunk
+	tests := []struct {
+		name    string
+		in      []byte
+		want    []byte
+		wantErr bool
+	}{
+		{"empty payload", frame(0, nil), []byte{}, false},
+		{"large payload arrives whole", frame(uint32(len(big)), big), big, false},
+		{"length over the maximum", frame(16<<20+1, nil), nil, true},
+		{"maximum length claimed, little sent", frame(16<<20, []byte{1, 2, 3}), nil, true},
+		{"truncated header", frame(4, nil)[:5], nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, got, err := atenvm.ReadFrame(bytes.NewReader(tt.in))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v", err)
+			}
+			if !tt.wantErr && !bytes.Equal(got, tt.want) {
+				t.Errorf("payload of %d bytes, want %d", len(got), len(tt.want))
+			}
+		})
+	}
+}
+
+// A claimed payload length must not be allocated before its bytes arrive.
+func TestReadFrameDoesNotPreallocateClaimedLength(t *testing.T) {
+	in := append(atenvm.Header{Endpoint: atenvm.EndpointBulkOut, PayloadLen: 16 << 20}.Encode(), 1, 2, 3)
+	var m runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m)
+	before := m.TotalAlloc
+	if _, _, err := atenvm.ReadFrame(bytes.NewReader(in)); err == nil {
+		t.Fatal("want error for a truncated payload")
+	}
+	runtime.ReadMemStats(&m)
+	if got := m.TotalAlloc - before; got > 1<<20 {
+		t.Errorf("allocated %d bytes for a 3-byte payload", got)
 	}
 }
 

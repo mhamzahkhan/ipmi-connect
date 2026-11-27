@@ -7,7 +7,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/mhamzahkhan/ipmi-connect/internal/atenvm"
 	"github.com/mhamzahkhan/ipmi-connect/internal/bmc"
@@ -20,21 +22,32 @@ var (
 
 // fakeRFB accepts KVM connections, runs the X7SB3 handshake and sends one Hermon update.
 func fakeRFB(t *testing.T) (addr string, conns chan net.Conn) {
+	return fakeRFBWith(t, func(int) rfbConn { return rfbConn{keyboardMouse: true} })
+}
+
+// rfbConn is how fakeRFBWith treats one connection.
+type rfbConn struct {
+	keyboardMouse bool // false: the BMC says another session has keyboard and mouse control
+	drop          bool // close the connection after the first update, as a network outage would
+}
+
+// fakeRFBWith is fakeRFB with per-connection behaviour; n counts connections from 0.
+func fakeRFBWith(t *testing.T, behave func(n int) rfbConn) (addr string, conns chan net.Conn) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	conns = make(chan net.Conn, 4)
+	conns = make(chan net.Conn, 64)
 	go func() {
-		for {
+		for n := 0; ; n++ {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
 			conns <- c
-			go func(c net.Conn) {
+			go func(c net.Conn, b rfbConn) {
 				_, _ = c.Write([]byte("RFB 003.008\n"))
 				_, _ = io.ReadFull(c, make([]byte, 12))
 				_, _ = c.Write([]byte{1, 0x10})
@@ -48,13 +61,105 @@ func fakeRFB(t *testing.T) (addr string, conns chan net.Conn) {
 				}
 				_, _ = c.Write([]byte{0, 0, 0, 0})
 				_, _ = io.ReadFull(c, make([]byte, 1))
-				_, _ = c.Write(serverInit("ATEN iKVM Server", 7, 1, 1, 1, 1))
+				km := byte(0)
+				if b.keyboardMouse {
+					km = 1
+				}
+				_, _ = c.Write(serverInit("ATEN iKVM Server", uint32(7+n), 1, km, 1, 1))
 				_, _ = c.Write(hermonUpdate(32, 16, hermon(0, 0, 1, tile(0, 0, []byte{0x00, 0x7C}, 256))))
+				if b.drop {
+					_ = c.Close()
+					return
+				}
 				_, _ = io.Copy(io.Discard, c)
-			}(c)
+			}(c, behave(n))
 		}
 	}()
 	return ln.Addr().String(), conns
+}
+
+// newReclaimClient is a logged-in client on fakeRFBWith with fast retries.
+func newReclaimClient(t *testing.T, behave func(n int) rfbConn) (*Client, chan net.Conn) {
+	t.Helper()
+	rfbAddr, conns := fakeRFBWith(t, behave)
+	c := NewClient("192.0.2.20", "ADMIN", "pw")
+	c.web = newFakeWeb(t, &fakeBMCWeb{password: "pw", sid: "0123456789abcdef"})
+	c.dial = func(ctx context.Context, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", rfbAddr)
+	}
+	c.retryMin, c.reclaimDelay = 10*time.Millisecond, 10*time.Millisecond
+	if err := c.Login(); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	return c, conns
+}
+
+func (c *Client) hasControl() bool {
+	s, err := c.current()
+	return err == nil && !s.viewOnly.Load()
+}
+
+// The X7SB3 keeps a session that vanished in a network outage (a host reboot on a shared NIC)
+// as the keyboard and mouse owner for a while, so the reconnect is view only. The client must
+// keep reconnecting until the BMC lets go, instead of settling for view only.
+func TestClientReclaimsControlAfterLosingASession(t *testing.T) {
+	c, conns := newReclaimClient(t, func(n int) rfbConn {
+		switch n {
+		case 0:
+			return rfbConn{keyboardMouse: true, drop: true}
+		case 1, 2:
+			return rfbConn{} // the stale session still holds control
+		default:
+			return rfbConn{keyboardMouse: true}
+		}
+	})
+	sink := &recordingSink{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); c.Logout() }()
+	go c.Run(ctx, sink)
+
+	waitFor(t, "keyboard and mouse control on a later connection", func() bool {
+		return len(conns) >= 4 && c.hasControl()
+	})
+	_, _, _, _, statuses := sink.snapshot()
+	if !slices.Contains(statuses, statusReclaiming) {
+		t.Errorf("statuses %q, want %q while waiting", statuses, statusReclaiming)
+	}
+}
+
+// View only from the very first connection is another user's session: no reconnect loop.
+func TestClientKeepsViewOnlyWhenAnotherUserHadControl(t *testing.T) {
+	c, conns := newReclaimClient(t, func(int) rfbConn { return rfbConn{} })
+	sink := &recordingSink{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); c.Logout() }()
+	go c.Run(ctx, sink)
+
+	waitFor(t, "a view-only session", func() bool { s, err := c.current(); return err == nil && s.viewOnly.Load() })
+	time.Sleep(100 * time.Millisecond) // ten reclaim delays
+	if n := len(conns); n != 1 {
+		t.Errorf("%d connections, want 1: view only from the start must not loop", n)
+	}
+}
+
+// Reclaiming gives up after the window: it might be a real user who took over meanwhile.
+func TestClientStopsReclaimingAfterTheWindow(t *testing.T) {
+	c, conns := newReclaimClient(t, func(n int) rfbConn {
+		return rfbConn{keyboardMouse: n == 0, drop: n == 0}
+	})
+	c.reclaimWindow = 100 * time.Millisecond
+	sink := &recordingSink{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); c.Logout() }()
+	go c.Run(ctx, sink)
+
+	waitFor(t, "settling for a view-only session", func() bool { s, err := c.current(); return err == nil && s.viewOnly.Load() })
+	n := len(conns)
+	time.Sleep(100 * time.Millisecond)
+	if len(conns) != n {
+		t.Errorf("still reconnecting after the window (%d -> %d connections)", n, len(conns))
+	}
 }
 
 func TestClientConnectsDecodesAndLogsOutAfterTheSocket(t *testing.T) {
