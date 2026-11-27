@@ -20,6 +20,8 @@ ipmi-connect talks to the BMCs' own KVM and virtual media protocols directly and
 
 It has been tested on the two boards I own. Other BMCs running the same firmware families may work, but I can't promise anything.
 
+**Got a different board?** I'd love a PR that makes it work, even partly. You test on your hardware, and I'll keep it working. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 | | Dell PowerEdge C6220 II | Supermicro X8DTL-6F |
 | :--- | :--- | :--- |
 | BMC | ASPEED AST2300, Avocent firmware 2.62.5 | Winbond WPCM450, ATEN firmware 3.13 |
@@ -102,6 +104,8 @@ Other tools do some of this, but none did everything I wanted: both of my boards
 
 ## Future plans
 
+Help with any of these is welcome; open an issue to say you're picking one up.
+
 - Load BMC credentials from HashiCorp Vault
 - An easy way to switch between servers
 - A hosted option: run it in a container on your network, sign in with OAuth, and connect to any of your BMCs from the browser
@@ -110,33 +114,9 @@ Other tools do some of this, but none did everything I wanted: both of my boards
 
 ## Contributing
 
-PRs are welcome, especially support for other boards and firmware. Please run `make` (lint, race tests, build) before sending one.
+PRs are welcome, and you don't need my hardware to send one. Support for other boards and firmware is the most useful thing you can add, followed by fixes and good bug reports.
 
-```bash
-make            # lint, test, build
-make test       # go test -race ./...
-make lint       # go vet + golangci-lint (config in .golangci.yml)
-make fmt
-```
-
-Code layout:
-
-```text
-cmd/ipmi-connect/      CLI: flags, vendor detection, per-vendor setup and stream loops
-internal/
-  bmc/                 Shared types, legacy TLS 1.0 HTTP client, password prompt
-  dell/                Avocent client: web session, APCP channels, heartbeat, video, input, power
-  supermicro/          ATEN client: CGI session, RFB handshake and input, power
-  web/                 Local HTTP/WebSocket server, key macros, frame broadcast
-    static/            Embedded browser UI
-  aspeed/              ASPEED video decoder (Go port of Aspeed's MPL-2.0 reference)
-  vmedia/              Virtual media manager: local image library, drives, transfer stats
-  avmp/                Dell (Avocent AVMP) virtual media client
-  atenvm/              Supermicro (ATEN Virtual Storage) virtual media client
-  diskimage/           FAT image creation (blank, or from a folder)
-  textkeys/            Text to USB HID key presses (US layout)
-docs/                  Hardware notes, protocol specs, per-vendor deep dives
-```
+[CONTRIBUTING.md](CONTRIBUTING.md) has the details: how to send a PR, the code layout, testing, and the clean-room rules (no vendor code or files). In short: run `make` before you send it, keep it to one topic, and say what you tested on real hardware.
 
 ## Known issues
 
