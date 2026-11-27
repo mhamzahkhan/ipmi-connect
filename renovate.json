@@ -16,7 +16,7 @@
   "semanticCommits": "enabled",
   "automergeStrategy": "squash",
   "automergeType": "pr",
-  "platformAutomerge": true,
+  "platformAutomerge": false,
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": {
     "enabled": true,
