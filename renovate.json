@@ -109,7 +109,9 @@
   ],
   "timezone": "Europe/London",
   "minimumReleaseAge": "3 days",
-  "dependencyDashboard": true,
+  "dependencyDashboard": {
+    "enabled": true
+  },
   "assignees": [
     "mhamzahkhan"
   ]
